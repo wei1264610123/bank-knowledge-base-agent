@@ -19,7 +19,7 @@
 - **LangChain** - AI应用开发框架
 - **阿里云百炼（通义千问）** - LLM模型
 - **SQLite** - 主数据库（可切换PostgreSQL）
-- **Milvus Lite** - 向量数据库（本地嵌入式）
+- **ChromaDB** - 向量数据库（本地嵌入式，目录 `backend/chroma_data/`）
 
 ### 前端
 - **Vue 3** - 响应式前端框架
@@ -139,13 +139,50 @@ LangChain-Agent/
 ## 📝 注意事项
 
 1. **API Key安全**：请勿将API Key提交到代码仓库
-2. **模型下载**：首次运行会下载Embedding模型，需要网络连接
+2. **Embedding 调用**：文档向量化使用阿里云百炼 Embedding API，需保证 `DASHSCOPE_API_KEY` 有效且有调用额度
 3. **文件大小**：文档上传限制为10MB
 4. **浏览器兼容**：推荐使用Chrome、Edge等现代浏览器
 
 ## 🤝 贡献
 
 欢迎提交Issue和Pull Request！
+
+## 🔄 版本管理（Git/GitHub）
+
+本项目通过 Git 同步到 GitHub：`https://github.com/wei1264610123/bank-knowledge-base-agent`
+
+### 克隆到新电脑
+
+```bash
+git clone https://github.com/wei1264610123/bank-knowledge-base-agent.git
+cd bank-knowledge-base-agent
+```
+
+### 修改代码后同步更新（记住这 3 行）
+
+```bash
+git add .
+git commit -m "这次改了什么（简要说明）"
+git push
+```
+
+每次改完代码执行这三行，GitHub 上的仓库就会同步更新。
+
+### 常用查看命令
+
+```bash
+git status        # 查看哪些文件被修改了
+git log --oneline # 查看提交历史
+git pull          # 从 GitHub 拉取最新代码（换电脑/多人协作时用）
+```
+
+### 不会上传的内容（已在 `.gitignore` 中排除，请勿删除该配置）
+
+- `backend/.env`：API Key 等敏感配置（提交前请确认未包含）
+- `backend/bankkb.db`、`backend/chroma_data/`、`backend/uploads/`：本地数据库、向量库与上传文件
+- `backend/reports/`、`frontend/node_modules/`：测试报告与依赖
+
+新环境按 `backend/.env.example` 复制为 `.env` 并填写 `DASHSCOPE_API_KEY` 即可运行。
 
 ## 📄 许可证
 
