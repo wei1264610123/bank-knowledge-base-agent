@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment Variables
+.env
+.env.local
+
+# Database
+*.db
+*.sqlite
+*.db-shm
+*.db-wal
+
+# Milvus
+milvus_data.db/
+*.db-journal
+
+# ChromaDB 向量数据
+backend/chroma_data/
+
+# 测试产物
+backend/reports/
+backend/.pytest_cache/
+backend/.coverage
+backend/tests/test_bankkb.db
+
+# Uploads
+uploads/
+
+# Logs
+*.log
+logs/
+
+# Node.js
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints/

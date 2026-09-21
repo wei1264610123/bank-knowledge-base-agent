@@ -1,0 +1,28 @@
+{
+  "name": "bankkb-frontend",
+  "version": "1.0.0",
+  "description": "银行问答系统前端",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.4.15",
+    "vue-router": "^4.2.5",
+    "pinia": "^2.1.7",
+    "axios": "^1.6.5",
+    "element-plus": "^2.5.3",
+    "@element-plus/icons-vue": "^2.3.1",
+    "marked": "^11.1.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "vite": "^5.0.11",
+    "@vitejs/plugin-vue": "^5.0.3",
+    "@types/node": "^20.11.5",
+    "unplugin-auto-import": "^0.17.3",
+    "unplugin-vue-components": "^0.26.0"
+  }
+}

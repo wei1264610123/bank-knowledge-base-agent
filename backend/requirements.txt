@@ -1,0 +1,33 @@
+# Web框架
+fastapi
+uvicorn[standard]
+python-multipart
+
+# 数据库
+sqlalchemy
+aiosqlite
+alembic
+
+# 安全认证
+python-jose[cryptography]
+passlib[bcrypt]
+
+# LangChain
+langchain
+langchain-openai
+langchain-community
+langchain-text-splitters
+
+# 向量数据库（本地嵌入式，无需服务器）
+chromadb
+
+# 文档处理
+pypdf
+docx2txt
+
+# 工具库
+pydantic
+pydantic-settings
+python-dotenv
+aiofiles
+httpx
