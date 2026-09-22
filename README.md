@@ -184,6 +184,11 @@ git pull          # 从 GitHub 拉取最新代码（换电脑/多人协作时用
 
 新环境按 `backend/.env.example` 复制为 `.env` 并填写 `DASHSCOPE_API_KEY` 即可运行。
 
+### 成品页面
+![alt text](image-1.png)
+![alt text](image.png)
+![alt text](image-2.png)
+
 ## 📄 许可证
 
 MIT License
