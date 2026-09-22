@@ -86,6 +86,20 @@ npm run dev
 - 用户名：admin
 - 密码：123456
 
+## 🐳 Docker 一键部署（推荐服务器部署）
+
+不想手动装 Python/Node？用 Docker 一条命令跑起来（前端 Nginx + 后端 FastAPI 双容器，数据自动持久化）：
+
+```bash
+cp backend/.env.example backend/.env    # 填入 DASHSCOPE_API_KEY
+cd deploy/docker
+docker compose up -d --build            # 一条命令启动
+```
+
+访问 `http://服务器IP` 即进入系统。
+
+> 📖 **详细小白教程**（装 Docker、防火墙、备份恢复、常见问题）见 [docs/DEPLOY_DOCKER.md](docs/DEPLOY_DOCKER.md)
+
 ## 📖 使用说明
 
 ### 管理员功能

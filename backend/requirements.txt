@@ -8,9 +8,10 @@ sqlalchemy
 aiosqlite
 alembic
 
-# 安全认证
+# 安全认证（bcrypt 已固定版本：passlib 1.7.4 与 bcrypt 4.x 不兼容，会导致登录报错）
 python-jose[cryptography]
-passlib[bcrypt]
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
 
 # LangChain
 langchain

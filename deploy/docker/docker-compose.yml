@@ -1,0 +1,40 @@
+# ============================================
+# 银行问答系统 - Docker 一键部署
+# 使用方法:
+#   cd deploy/docker
+#   docker compose up -d --build
+# 访问:  http://服务器IP    (80 端口, 前端+API)
+#        http://服务器IP:8000 (后端 API 文档, 可选)
+# ============================================
+services:
+  backend:
+    build:
+      context: ../..          # 构建上下文 = 项目根目录
+      dockerfile: deploy/docker/backend.Dockerfile
+    container_name: bankkb-backend
+    env_file:
+      - ../../backend/.env    # 读取你的配置（DASHSCOPE_API_KEY 等）
+    environment:
+      # 数据文件统一放到 /app/data，由 volume 持久化（删容器不丢数据）
+      DATABASE_URL: sqlite+aiosqlite:////app/data/bankkb.db
+      CHROMA_PERSIST_DIR: /app/data/chroma_data
+      UPLOAD_DIR: /app/data/uploads
+    volumes:
+      - bankkb-data:/app/data     # 数据卷：数据库 + 向量库 + 上传文件
+    ports:
+      - "8000:8000"               # 后端 API（含 /docs 文档）
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/frontend.Dockerfile
+    container_name: bankkb-frontend
+    depends_on:
+      - backend
+    ports:
+      - "80:80"                   # 网站入口
+    restart: unless-stopped
+
+volumes:
+  bankkb-data:
