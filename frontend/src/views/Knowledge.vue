@@ -368,7 +368,7 @@ const getStatusText = (status: string) => {
 }
 
 .document-detail h4 {
-  color: #303133;
+  color: var(--text-primary);
 }
 
 .chunks-list {
@@ -378,7 +378,7 @@ const getStatusText = (status: string) => {
 
 .chunk-item {
   padding: 12px;
-  background: #f5f7fa;
+  background: var(--bg-panel);
   border-radius: 8px;
   margin-bottom: 12px;
 }
@@ -390,7 +390,7 @@ const getStatusText = (status: string) => {
 }
 
 .chunk-content {
-  color: #606266;
+  color: var(--text-regular);
   line-height: 1.6;
   white-space: pre-wrap;
 }

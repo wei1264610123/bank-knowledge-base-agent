@@ -117,12 +117,12 @@ const handleLogin = async () => {
 
 .card-header h2 {
   margin: 0 0 8px 0;
-  color: #303133;
+  color: var(--text-primary);
 }
 
 .card-header p {
   margin: 0;
-  color: #909399;
+  color: var(--text-secondary);
 }
 
 .login-button {
@@ -131,7 +131,7 @@ const handleLogin = async () => {
 
 .login-footer {
   text-align: center;
-  color: #909399;
+  color: var(--text-secondary);
   font-size: 14px;
 }
 

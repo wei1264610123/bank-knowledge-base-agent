@@ -144,7 +144,7 @@ const handleChangePassword = async () => {
 
 .card-header h3 {
   margin: 0;
-  color: #303133;
+  color: var(--text-primary);
 }
 
 .user-info-section {
@@ -165,17 +165,17 @@ const handleChangePassword = async () => {
 
 .user-meta h4 {
   margin: 0 0 8px 0;
-  color: #303133;
+  color: var(--text-primary);
 }
 
 .user-meta p {
   margin: 0 0 12px 0;
-  color: #909399;
+  color: var(--text-secondary);
 }
 
 .password-section h4 {
   margin: 0 0 20px 0;
-  color: #303133;
+  color: var(--text-primary);
 }
 
 .password-form {

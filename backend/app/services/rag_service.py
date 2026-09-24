@@ -155,7 +155,9 @@ class RAGService:
                     "content": doc.page_content[:300],
                     "source": source,
                     "page": doc.metadata.get("page", "N/A"),
-                    "score": doc.metadata.get("score", 0)
+                    "score": doc.metadata.get("score", 0),
+                    "document_id": doc.metadata.get("document_id", ""),
+                    "chunk_index": doc.metadata.get("chunk_index", 0)
                 })
                 seen_sources.add(source)
 

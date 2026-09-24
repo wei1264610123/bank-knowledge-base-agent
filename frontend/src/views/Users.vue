@@ -200,7 +200,7 @@
                   text
                   @click="openHandleDialog(row)"
                 >处理</el-button>
-                <span v-else style="color: #c0c4cc; font-size: 12px">已处理</span>
+                <span v-else style="color: var(--text-secondary); font-size: 12px">已处理</span>
               </template>
             </el-table-column>
           </el-table>
@@ -534,12 +534,12 @@ const formatDate = (dateStr: string) => {
 }
 
 .toolbar-tip {
-  color: #909399;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
 .dialog-tip {
-  color: #606266;
+  color: var(--text-regular);
   margin-bottom: 12px;
   line-height: 1.6;
   word-break: break-all;

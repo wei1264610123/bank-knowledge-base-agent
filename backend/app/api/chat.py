@@ -12,6 +12,7 @@ from app.database import get_db, async_session_factory
 from app.models.user import User
 from app.models.chat import ChatSession, ChatMessage
 from app.models.feedback import ChatFeedback, QuestionRequest
+from app.models.document import Document, DocumentChunk
 from app.schemas.chat import (
     ChatSessionCreate,
     ChatSessionResponse,
@@ -22,13 +23,16 @@ from app.schemas.chat import (
 )
 from app.schemas.feedback import ChatFeedbackCreate, QuestionRequestCreate
 from app.core.security import get_current_user
-from app.core.exceptions import SessionNotFoundException
+from app.core.exceptions import SessionNotFoundException, DocumentNotFoundException
 from app.core.audit import log_audit, get_client_ip
 from app.core.ratelimit import chat_rate_limiter
 from app.core.mask import mask_pii
 from app.services.chat_service import ChatService
 
 router = APIRouter()
+
+# P3 文档预览：单次最多返回的纯文本字符数（防止超大文档拖垮前端）
+MAX_PREVIEW_CHARS = 100_000
 
 
 @router.get("/sessions", response_model=List[ChatSessionResponse], summary="获取会话列表")
@@ -301,6 +305,41 @@ async def get_suggested_questions(
         if len(questions) >= 6:
             break
     return questions
+
+
+@router.get("/documents/{document_id}/preview", summary="文档原文预览（P3）")
+async def preview_document(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """返回知识库文档解析后的全文（按分块顺序拼接），供聊天页引用预览/定位"""
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    document = result.scalar_one_or_none()
+    if not document:
+        raise DocumentNotFoundException(document_id)
+
+    chunks = (
+        await db.execute(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == document_id)
+            .order_by(DocumentChunk.chunk_index)
+        )
+    ).scalars().all()
+
+    full_text = "\n\n".join(c.content for c in chunks).strip()
+    truncated = False
+    if len(full_text) > MAX_PREVIEW_CHARS:
+        full_text = full_text[:MAX_PREVIEW_CHARS]
+        truncated = True
+
+    return {
+        "document_id": document_id,
+        "filename": document.filename,
+        "content": full_text,
+        "total_chunks": len(chunks),
+        "truncated": truncated,
+    }
 
 
 @router.delete("/sessions/{session_id}/regenerate", summary="删除最后一条问答对（重新生成用）")

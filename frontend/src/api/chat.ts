@@ -16,6 +16,16 @@ export interface ReferenceItem {
   source: string
   page?: string
   score?: number
+  document_id?: string
+  chunk_index?: number
+}
+
+export interface DocumentPreview {
+  document_id: string
+  filename: string
+  content: string
+  total_chunks: number
+  truncated: boolean
 }
 
 export interface ChatMessage {
@@ -156,4 +166,11 @@ export const suggestedQuestions = (): Promise<string[]> => {
 // 删除会话末尾问答对（重新生成用）；回答已被评价时返回 409
 export const clearLastExchange = (sessionId: string) => {
   return request.delete(`/chat/sessions/${sessionId}/regenerate`)
+}
+
+// ---------- P3：文档原文预览 ----------
+
+// 获取知识库文档解析后的全文（供引用预览/定位）
+export const previewDocument = (documentId: string): Promise<DocumentPreview> => {
+  return request.get(`/chat/documents/${documentId}/preview`)
 }

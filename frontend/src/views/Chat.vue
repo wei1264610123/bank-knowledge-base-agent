@@ -1,7 +1,20 @@
 <template>
   <div class="chat-container">
+    <!-- 移动端：会话列表工具栏（P3：#12） -->
+    <div class="mobile-chat-bar">
+      <el-button text size="small" aria-label="打开会话列表" @click="sidebarOpen = true">
+        <el-icon><Menu /></el-icon><span>会话</span>
+      </el-button>
+      <el-button type="primary" size="small" @click="handleNewSession">
+        <el-icon><Plus /></el-icon> 新建对话
+      </el-button>
+    </div>
+
+    <!-- 移动端：会话侧栏遮罩（P3：#12） -->
+    <div v-if="sidebarOpen" class="sidebar-mask" @click="sidebarOpen = false"></div>
+
     <!-- 左侧：会话列表 -->
-    <div class="chat-sidebar">
+    <div class="chat-sidebar" :class="{ 'sidebar-open': sidebarOpen }">
       <div class="sidebar-header">
         <el-button type="primary" @click="handleNewSession">
           <el-icon><Plus /></el-icon>
@@ -67,7 +80,7 @@
           </div>
         </div>
 
-        <div v-for="message in chatStore.messages" :key="message.id" class="message-wrapper">
+        <div v-for="(message, index) in chatStore.messages" :key="message.id" class="message-wrapper">
           <!-- 用户消息 -->
           <div v-if="message.role === 'user'" class="message user-message">
             <div class="message-avatar">
@@ -92,9 +105,26 @@
                   <el-icon><Document /></el-icon>
                   参考来源
                 </div>
-                <div v-for="(ref, index) in message.references" :key="index" class="reference-item">
+                <div
+                  v-for="(ref, refIndex) in message.references"
+                  :key="refIndex"
+                  class="reference-item"
+                  @click="openPreview(ref)"
+                >
                   <div class="reference-source">{{ ref.source }}</div>
-                  <div class="reference-content">{{ ref.content }}...</div>
+                  <!-- P3：#10 引用片段：问题关键词高亮 -->
+                  <div class="reference-content" v-html="renderHighlight(ref, highlightFor(index))"></div>
+                  <div class="reference-meta">
+                    <el-button
+                      size="small"
+                      text
+                      type="primary"
+                      :disabled="!ref.document_id"
+                      @click.stop="openPreview(ref)"
+                    >
+                      {{ ref.document_id ? '📖 预览文档' : '无原文预览' }}
+                    </el-button>
+                  </div>
                 </div>
               </div>
 
@@ -198,9 +228,14 @@
         </el-button>
       </div>
       <div class="references-list">
-        <div v-for="(ref, index) in selectedReferences" :key="index" class="reference-detail">
+        <div v-for="(ref, index) in selectedReferences" :key="index" class="reference-detail" @click="openPreview(ref)">
           <div class="ref-source">{{ ref.source }}</div>
-          <div class="ref-content">{{ ref.content }}</div>
+          <div class="ref-content" v-html="renderHighlight(ref, lastUserQuestion)"></div>
+          <div class="reference-meta">
+            <el-button size="small" text type="primary" :disabled="!ref.document_id" @click.stop="openPreview(ref)">
+              {{ ref.document_id ? '📖 预览文档' : '无原文预览' }}
+            </el-button>
+          </div>
         </div>
       </div>
     </div>
@@ -248,22 +283,154 @@
         </el-button>
       </template>
     </el-dialog>
+  <!-- 📖 文档原文预览（P3：#10） -->
+    <el-dialog
+      v-model="previewDialog.visible"
+      :title="`📖 文档预览：${previewDialog.filename}`"
+      class="preview-dialog"
+      width="860px"
+      top="6vh"
+    >
+      <div class="preview-toolbar">
+        <el-input
+          v-model="previewSearch"
+          placeholder="在文档中搜索关键词..."
+          clearable
+          size="small"
+          :prefix-icon="Search"
+          style="width: 260px"
+        />
+        <el-tag v-if="previewDialog.loading" type="info" size="small">加载中...</el-tag>
+        <el-tag v-if="previewDialog.truncated" type="warning" size="small">内容过长，仅预览前部分</el-tag>
+        <el-tag v-if="previewDialog.error" type="danger" size="small">{{ previewDialog.error }}</el-tag>
+      </div>
+      <div class="preview-body">
+        <template v-if="previewDialog.content">
+          <p
+            v-for="(p, pIndex) in previewFilteredParagraphs"
+            :key="pIndex"
+            class="preview-para"
+            :class="{ 'anchor-para': pIndex === previewAnchorIndex }"
+            v-html="previewRenderParagraph(p)"
+          ></p>
+        </template>
+        <el-empty v-else-if="!previewDialog.loading" description="暂无内容" />
+      </div>
+      <template #footer>
+        <span class="preview-footer-tip">“{{ previewDialog.anchorLabel }}” 相关段落已用颜色标记</span>
+        <el-button @click="previewDialog.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue'
-import { Plus, Delete, ChatDotRound, Document, Promotion, Close, Search, EditPen, Download } from '@element-plus/icons-vue'
+import { Plus, Delete, ChatDotRound, Document, Promotion, Close, Search, EditPen, Download, Menu } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useChatStore } from '@/stores/chat'
-import { submitFeedback, submitQuestionRequest, getMessages, suggestedQuestions as fetchSuggestedQuestions } from '@/api/chat'
+import { submitFeedback, submitQuestionRequest, getMessages, suggestedQuestions as fetchSuggestedQuestions, previewDocument } from '@/api/chat'
 import type { ReferenceItem } from '@/api/chat'
+import { highlightQuote } from '@/utils/highlight'
 
 const chatStore = useChatStore()
 
 const inputMessage = ref('')
 const messagesRef = ref<HTMLElement>()
 const selectedReferences = ref<ReferenceItem[]>([])
+
+// ---------- P3：#12 移动端会话侧栏 ----------
+const sidebarOpen = ref(false)
+
+// ---------- P3：#10 文档原文预览 ----------
+const previewDialog = reactive({
+  visible: false,
+  loading: false,
+  filename: '',
+  content: '',
+  truncated: false,
+  error: '',
+  anchorLabel: ''
+})
+const previewSearch = ref('')
+const previewAnchorIndex = ref(-1)
+
+// 全文按行切分为段落
+const previewParagraphs = computed(() =>
+  previewDialog.content ? previewDialog.content.split(/\n/) : []
+)
+
+// 搜索过滤后的段落
+const previewFilteredParagraphs = computed(() => {
+  const kw = previewSearch.value.trim().toLowerCase()
+  if (!kw) return previewParagraphs.value
+  return previewParagraphs.value.filter(p => p.toLowerCase().includes(kw))
+})
+
+// 段落渲染：未搜索时对引用锚点亮词高亮，搜索时对搜索词高亮
+const previewRenderParagraph = (p: string) =>
+  highlightQuote(p, previewSearch.value.trim() || previewDialog.anchorLabel)
+
+// 引用卡片渲染：用该条回答对应的用户提问做关键词高亮
+const renderHighlight = (refItem: ReferenceItem, question: string) =>
+  highlightQuote(refItem.content, question)
+
+// 找某条 AI 回答前面最近的一条用户提问
+const highlightFor = (messageIndex: number) => {
+  for (let i = messageIndex - 1; i >= 0; i--) {
+    if (chatStore.messages[i].role === 'user') return chatStore.messages[i].content
+  }
+  return ''
+}
+
+// 对话框中最后一条用户提问（右侧引用面板高亮用）
+const lastUserQuestion = computed(() => {
+  const msgs = chatStore.messages
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'user') return msgs[i].content
+  }
+  return ''
+})
+
+const locateAnchor = (quote: string) => {
+  const head = quote.replace(/\s+/g, '').slice(0, 40)
+  const paras = previewParagraphs.value
+  if (!head || paras.length === 0) {
+    previewAnchorIndex.value = paras.length ? 0 : -1
+    return
+  }
+  const idx = paras.findIndex(p => p.replace(/\s+/g, '').includes(head))
+  previewAnchorIndex.value = idx >= 0 ? idx : 0
+}
+
+const openPreview = async (refItem: ReferenceItem) => {
+  if (!refItem.document_id) {
+    ElMessage.info('该引用暂无文档原文可预览')
+    return
+  }
+  previewDialog.visible = true
+  previewDialog.loading = true
+  previewDialog.filename = refItem.source
+  previewDialog.content = ''
+  previewDialog.truncated = false
+  previewDialog.error = ''
+  previewSearch.value = ''
+  previewDialog.anchorLabel = refItem.content.replace(/\s+/g, '').slice(0, 12)
+
+  try {
+    const data = await previewDocument(refItem.document_id)
+    previewDialog.filename = data.filename
+    previewDialog.content = data.content
+    previewDialog.truncated = data.truncated
+    await nextTick()
+    locateAnchor(refItem.content)
+  } catch (e) {
+    previewDialog.error = '预览加载失败，请稍后重试'
+    ElMessage.error('文档预览加载失败')
+  } finally {
+    previewDialog.loading = false
+  }
+}
 
 // ---------- 推荐问题 / 快速追问 / 复制 / 重新生成（P2） ----------
 const suggestions = ref<string[]>([])
@@ -486,6 +653,8 @@ const handleNewSession = async () => {
 
 const handleSelectSession = async (sessionId: string) => {
   await chatStore.selectSession(sessionId)
+  // 移动端：选中会话后收起抽屉（P3：#12）
+  sidebarOpen.value = false
 }
 
 const handleDeleteSession = async (sessionId: string) => {
@@ -518,23 +687,33 @@ const formatMessage = (content: string) => {
 .chat-container {
   display: flex;
   height: calc(100vh - 120px);
-  background: #fff;
+  background: var(--bg-card);
   border-radius: 8px;
   overflow: hidden;
+}
+
+/* 移动端会话工具栏（P3：#12） */
+.mobile-chat-bar {
+  display: none;
+}
+
+/* 移动端会话侧栏遮罩 */
+.sidebar-mask {
+  display: none;
 }
 
 /* 左侧边栏 */
 .chat-sidebar {
   width: 260px;
-  border-right: 1px solid #e6e6e6;
+  border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
-  background: #f5f7fa;
+  background: var(--bg-panel);
 }
 
 .sidebar-header {
   padding: 16px;
-  border-bottom: 1px solid #e6e6e6;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .sidebar-header .el-button {
@@ -544,7 +723,7 @@ const formatMessage = (content: string) => {
 /* 会话搜索框 */
 .search-box {
   padding: 10px 12px;
-  border-bottom: 1px solid #e6e6e6;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .session-list {
@@ -561,10 +740,11 @@ const formatMessage = (content: string) => {
   border-radius: 8px;
   cursor: pointer;
   transition: background-color 0.2s;
+  color: var(--text-regular);
 }
 
 .session-item:hover {
-  background: #e6e6e6;
+  background: var(--border-color);
 }
 
 .session-item.active {
@@ -596,7 +776,7 @@ const formatMessage = (content: string) => {
 }
 
 .session-item:not(.active) .session-actions .el-icon {
-  color: #909399;
+  color: var(--text-secondary);
 }
 
 .session-actions .el-icon:hover {
@@ -605,7 +785,7 @@ const formatMessage = (content: string) => {
 
 .no-sessions {
   text-align: center;
-  color: #909399;
+  color: var(--text-secondary);
   padding: 40px 20px;
 }
 
@@ -630,11 +810,11 @@ const formatMessage = (content: string) => {
 
 .welcome-message h2 {
   margin-bottom: 12px;
-  color: #303133;
+  color: var(--text-primary);
 }
 
 .welcome-message p {
-  color: #909399;
+  color: var(--text-secondary);
   margin-bottom: 24px;
 }
 
@@ -664,7 +844,7 @@ const formatMessage = (content: string) => {
 }
 
 .no-sugg {
-  color: #c0c4cc;
+  color: var(--text-secondary);
   font-size: 13px;
 }
 
@@ -678,7 +858,7 @@ const formatMessage = (content: string) => {
 }
 
 .follow-label {
-  color: #909399;
+  color: var(--text-secondary);
   font-size: 12px;
   margin-right: 4px;
 }
@@ -714,8 +894,8 @@ const formatMessage = (content: string) => {
 }
 
 .ai-bubble {
-  background: #f5f7fa;
-  color: #303133;
+  background: var(--bg-bubble-ai);
+  color: var(--text-primary);
   border-bottom-left-radius: 4px;
 }
 
@@ -728,9 +908,9 @@ const formatMessage = (content: string) => {
 .references {
   margin-top: 12px;
   padding: 12px;
-  background: #fafafa;
+  background: var(--bg-ref);
   border-radius: 8px;
-  border: 1px solid #e6e6e6;
+  border: 1px solid var(--border-color);
 }
 
 .references-title {
@@ -738,16 +918,23 @@ const formatMessage = (content: string) => {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-secondary);
   margin-bottom: 8px;
 }
 
 .reference-item {
-  padding: 8px;
-  background: #fff;
+  padding: 8px 10px;
+  background: var(--bg-ref-item);
   border-radius: 4px;
   margin-bottom: 8px;
   font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+  border: 1px solid transparent;
+}
+
+.reference-item:hover {
+  border-color: #409eff;
 }
 
 .reference-item:last-child {
@@ -761,7 +948,20 @@ const formatMessage = (content: string) => {
 }
 
 .reference-content {
-  color: #606266;
+  color: var(--text-regular);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* 预览文档按钮行（P3：#10） */
+.reference-meta {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.reference-meta .el-button {
+  padding: 0 4px;
   font-size: 12px;
 }
 
@@ -780,7 +980,7 @@ const formatMessage = (content: string) => {
 
 /* 弹窗提示文字 */
 .dialog-tip {
-  color: #606266;
+  color: var(--text-regular);
   margin-bottom: 12px;
   line-height: 1.6;
 }
@@ -795,7 +995,7 @@ const formatMessage = (content: string) => {
 .dot {
   width: 8px;
   height: 8px;
-  background: #909399;
+  background: var(--text-secondary);
   border-radius: 50%;
   animation: bounce 1.4s infinite ease-in-out;
 }
@@ -811,8 +1011,8 @@ const formatMessage = (content: string) => {
 /* 输入区域 */
 .input-container {
   padding: 16px 20px;
-  border-top: 1px solid #e6e6e6;
-  background: #fff;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-card);
 }
 
 .input-wrapper {
@@ -830,10 +1030,10 @@ const formatMessage = (content: string) => {
 /* 右侧引用面板 */
 .chat-aside {
   width: 300px;
-  border-left: 1px solid #e6e6e6;
+  border-left: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
-  background: #fafafa;
+  background: var(--bg-ref);
 }
 
 .aside-header {
@@ -841,11 +1041,12 @@ const formatMessage = (content: string) => {
   justify-content: space-between;
   align-items: center;
   padding: 16px;
-  border-bottom: 1px solid #e6e6e6;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .aside-header h4 {
   margin: 0;
+  color: var(--text-primary);
 }
 
 .references-list {
@@ -856,10 +1057,16 @@ const formatMessage = (content: string) => {
 
 .reference-detail {
   padding: 12px;
-  background: #fff;
+  background: var(--bg-ref-item);
   border-radius: 8px;
   margin-bottom: 12px;
-  border: 1px solid #e6e6e6;
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.reference-detail:hover {
+  border-color: #409eff;
 }
 
 .ref-source {
@@ -869,8 +1076,115 @@ const formatMessage = (content: string) => {
 }
 
 .ref-content {
-  color: #606266;
+  color: var(--text-regular);
   font-size: 13px;
   line-height: 1.6;
+}
+
+/* ---------- P3：#10 文档预览弹窗 ---------- */
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.preview-body {
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.preview-para {
+  margin-bottom: 12px;
+  line-height: 1.8;
+  color: var(--text-regular);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.preview-para.anchor-para {
+  background: var(--bg-ref-item);
+  border-left: 3px solid #409eff;
+  padding: 8px 10px;
+  border-radius: 4px;
+}
+
+.preview-footer-tip {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-right: 12px;
+}
+
+/* ---------- P3：#12 移动端适配 ---------- */
+@media (max-width: 768px) {
+  .chat-container {
+    height: calc(100vh - 88px);
+    flex-direction: column;
+  }
+
+  /* 顶部工具栏 */
+  .mobile-chat-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-card);
+  }
+
+  /* 会话侧栏：抽屉滑出 */
+  .chat-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 100;
+    width: 78vw;
+    max-width: 280px;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: 2px 0 12px rgba(0, 0, 0, 0.2);
+  }
+
+  .chat-sidebar.sidebar-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-mask {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 99;
+  }
+
+  /* 右侧引用面板：全屏抽屉 */
+  .chat-aside {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 98;
+    width: 85vw;
+    max-width: 360px;
+    box-shadow: -2px 0 12px rgba(0, 0, 0, 0.2);
+  }
+
+  .messages-container {
+    padding: 12px;
+  }
+
+  .message-content {
+    max-width: 85%;
+  }
+
+  /* 文档预览弹窗窄屏加宽 */
+  .preview-dialog {
+    width: 94vw !important;
+  }
 }
 </style>
