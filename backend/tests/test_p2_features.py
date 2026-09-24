@@ -78,11 +78,13 @@ async def test_suggested_questions(client, user_token_factory):
     user_id = me.json()["id"]
 
     # 清空相关表，避免历史测试数据污染 TOP-N 统计（测试库专用，安全）
-    # 注意外键引用顺序：feedback → messages → sessions
+    # 注意外键引用顺序：feedback / quality_reviews → messages → sessions
     from sqlalchemy import delete
     async with async_session_factory() as db:
         from app.models.feedback import QuestionRequest
+        from app.models.review import QualityReview
         await db.execute(delete(ChatFeedback))
+        await db.execute(delete(QualityReview))
         await db.execute(delete(ChatMessage))
         await db.execute(delete(QuestionRequest))
         await db.execute(delete(ChatSession))

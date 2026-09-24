@@ -243,6 +243,90 @@
           </el-table>
           <el-empty v-if="auditLogs.length === 0" description="暂无审计日志" />
         </el-tab-pane>
+
+        <!-- Tab 5: 回答质量抽查（P3：#13） -->
+        <el-tab-pane label="🔍 质量抽查" name="reviews">
+          <div class="toolbar">
+            <el-radio-group v-model="reviewFilter" size="small" @change="onReviewFilterChange">
+              <el-radio-button value="">全部</el-radio-button>
+              <el-radio-button value="unreviewed">未评判</el-radio-button>
+              <el-radio-button value="reviewed">已评判</el-radio-button>
+            </el-radio-group>
+            <el-button size="small" @click="fetchReviews">刷新</el-button>
+            <span class="toolbar-tip">抽查 AI 回答质量（未评判的排前面），配合用户反馈做质量管控</span>
+          </div>
+
+          <!-- 质量概览 -->
+          <div class="review-stats">
+            <div class="stat-card">
+              <div class="stat-num">{{ reviewStats.total_answers }}</div>
+              <div class="stat-label">AI 回答总数</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-num">{{ reviewStats.reviewed }}</div>
+              <div class="stat-label">已评判</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-num">{{ reviewStats.unreviewed }}</div>
+              <div class="stat-label">待评判</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-num">{{ reviewStats.avg_rating }}<span class="stat-unit">/5</span></div>
+              <div class="stat-label">平均分</div>
+            </div>
+          </div>
+
+          <el-table :data="reviews" v-loading="reviewsLoading" stripe style="width: 100%">
+            <el-table-column label="回答内容" min-width="260">
+              <template #default="{ row }">
+                <div class="review-content-preview" :title="row.content">{{ row.content }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="提问用户" width="110">
+              <template #default="{ row }">{{ row.username || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="回答时间" width="160">
+              <template #default="{ row }">{{ row.created_at }}</template>
+            </el-table-column>
+            <el-table-column label="用户反馈" width="120">
+              <template #default="{ row }">
+                <el-tag v-if="row.feedback" :type="row.feedback.rating === 'up' ? 'success' : 'danger'" size="small">
+                  {{ row.feedback.rating === 'up' ? '👍 好评' : '👎 差评' }}
+                </el-tag>
+                <span v-else class="toolbar-tip">无</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="评判" width="110">
+              <template #default="{ row }">
+                <el-tag
+                  v-if="row.review"
+                  size="small"
+                  :type="row.review.rating >= 4 ? 'success' : row.review.rating >= 2 ? 'warning' : 'danger'"
+                >
+                  {{ row.review.rating }} 分
+                </el-tag>
+                <el-tag v-else size="small" type="info">未评判</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" text type="primary" @click="openReview(row)">查看 / 评判</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="reviews.length === 0" description="暂无 AI 回答" />
+
+          <div v-if="reviewTotal > reviewPageSize" class="pagination-wrapper">
+            <el-pagination
+              v-model:current-page="reviewPage"
+              :page-size="reviewPageSize"
+              :total="reviewTotal"
+              layout="prev, pager, next"
+              small
+              @current-change="fetchReviews"
+            />
+          </div>
+        </el-tab-pane>
       </el-tabs>
     </el-card>
 
@@ -287,6 +371,51 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 质量评判弹窗（P3：#13） -->
+    <el-dialog v-model="reviewDialog.visible" title="🔍 回答质量评判" width="600px">
+      <div class="review-dialog-meta">
+        <span>提问用户：<b>{{ reviewDialog.username }}</b></span>
+        <span>回答时间：{{ reviewDialog.created_at }}</span>
+      </div>
+      <p class="dialog-tip review-dialog-answer">{{ reviewDialog.content }}</p>
+      <el-divider />
+
+      <div class="review-dialog-meta">
+        <span>用户反馈：
+          <el-tag
+            v-if="reviewDialog.feedback"
+            :type="reviewDialog.feedback.rating === 'up' ? 'success' : 'danger'"
+            size="small"
+          >
+            {{ reviewDialog.feedback.rating === 'up' ? '👍 好评' : '👎 差评' }}
+          </el-tag>
+          <span v-else class="toolbar-tip">无反馈</span>
+        </span>
+        <span v-if="reviewDialog.feedback?.comment" class="toolbar-tip">用户意见：{{ reviewDialog.feedback.comment }}</span>
+      </div>
+      <el-divider />
+
+      <div class="review-form">
+        <div class="review-form-label">质量评分（1-5 分）</div>
+        <el-rate v-model="reviewDialog.rating" :max="5" show-score />
+        <el-input
+          v-model="reviewDialog.comment"
+          type="textarea"
+          :rows="3"
+          maxlength="1000"
+          show-word-limit
+          placeholder="评判意见（选填）：回答是否准确、引用是否相关、是否需要优化…"
+          style="margin-top: 12px"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="reviewDialog.visible = false">取消</el-button>
+        <el-button type="primary" :disabled="!reviewDialog.rating" @click="submitReviewDialog">
+          保存评判
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -304,11 +433,13 @@ import {
   resetUserPassword,
   getDashboard,
   exportCsv,
+  getReviews,
+  submitReview,
   EXPORT_FILE_NAMES,
   ACTION_LABELS
 } from '@/api/admin'
 import type { UserInfo } from '@/api/auth'
-import type { Stats, QuestionRequest, AuditLog, DashboardData, ExportType } from '@/api/admin'
+import type { Stats, QuestionRequest, AuditLog, DashboardData, ExportType, ReviewItem, ReviewStats, ReviewFeedback } from '@/api/admin'
 
 const activeTab = ref('users')
 
@@ -411,12 +542,90 @@ const auditLogs = ref<AuditLog[]>([])
 const auditLoading = ref(false)
 const auditActionFilter = ref('')
 
+// ---------- 回答质量抽查（P3：#13） ----------
+const reviews = ref<ReviewItem[]>([])
+const reviewsLoading = ref(false)
+const reviewFilter = ref('')
+const reviewPage = ref(1)
+const reviewPageSize = ref(20)
+const reviewTotal = ref(0)
+const reviewStats = reactive<ReviewStats>({
+  total_answers: 0,
+  reviewed: 0,
+  unreviewed: 0,
+  avg_rating: 0
+})
+
+const reviewDialog = reactive<{
+  visible: boolean
+  messageId: string
+  username: string
+  created_at: string
+  content: string
+  feedback: ReviewFeedback | null
+  rating: number
+  comment: string
+}>({
+  visible: false,
+  messageId: '',
+  username: '',
+  created_at: '',
+  content: '',
+  feedback: null,
+  rating: 0,
+  comment: ''
+})
+
+const fetchReviews = async () => {
+  reviewsLoading.value = true
+  try {
+    const data = await getReviews(
+      reviewPage.value,
+      reviewPageSize.value,
+      (reviewFilter.value as 'reviewed' | 'unreviewed' | undefined) || undefined
+    )
+    reviews.value = data.items
+    reviewTotal.value = data.total
+    Object.assign(reviewStats, data.stats)
+  } finally {
+    reviewsLoading.value = false
+  }
+}
+
+const onReviewFilterChange = () => {
+  reviewPage.value = 1
+  fetchReviews()
+}
+
+const openReview = (row: ReviewItem) => {
+  reviewDialog.visible = true
+  reviewDialog.messageId = row.message_id
+  reviewDialog.username = row.username
+  reviewDialog.created_at = row.created_at
+  reviewDialog.content = row.content
+  reviewDialog.feedback = row.feedback
+  reviewDialog.rating = row.review?.rating || 0
+  reviewDialog.comment = row.review?.comment || ''
+}
+
+const submitReviewDialog = async () => {
+  try {
+    await submitReview(reviewDialog.messageId, reviewDialog.rating, reviewDialog.comment || undefined)
+    reviewDialog.visible = false
+    ElMessage.success('评判已保存')
+    await fetchReviews()
+  } catch (e) {
+    ElMessage.error('保存失败，请稍后重试')
+  }
+}
+
 onMounted(async () => {
   await fetchUsers()
   await fetchStats()
   await fetchQuestions()
   await fetchAuditLogs()
   await fetchDashboard()
+  await fetchReviews()
 })
 
 const fetchUsers = async () => {
@@ -543,5 +752,75 @@ const formatDate = (dateStr: string) => {
   margin-bottom: 12px;
   line-height: 1.6;
   word-break: break-all;
+}
+
+/* ---------- 回答质量抽查（P3：#13） ---------- */
+.review-stats {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  flex: 1;
+  min-width: 120px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 14px 16px;
+  text-align: center;
+}
+
+.stat-num {
+  font-size: 24px;
+  font-weight: bold;
+  color: var(--text-primary);
+}
+
+.stat-unit {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: normal;
+}
+
+.stat-label {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.review-content-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--text-regular);
+  line-height: 1.5;
+}
+
+.review-dialog-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-regular);
+  margin-bottom: 8px;
+}
+
+.review-dialog-answer {
+  background: var(--bg-panel);
+  border-radius: 6px;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.review-form-label {
+  font-size: 13px;
+  color: var(--text-regular);
+  margin-bottom: 8px;
 }
 </style>

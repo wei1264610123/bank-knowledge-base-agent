@@ -8,16 +8,18 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, exists
 from app.database import get_db
 from app.models.user import User
 from app.models.document import Document
 from app.models.chat import ChatSession, ChatMessage
 from app.models.feedback import ChatFeedback, QuestionRequest
 from app.models.audit import AuditLog
+from app.models.review import QualityReview
 from app.schemas.auth import UserResponse, AdminPasswordReset
 from app.schemas.feedback import QuestionRequestResponse, QuestionRequestUpdate
 from app.schemas.audit import AuditLogResponse
+from app.schemas.review import ReviewCreate
 from app.core.security import get_current_admin_user, get_password_hash
 from app.core.audit import log_audit, get_client_ip
 from app.core.mask import mask_pii
@@ -305,6 +307,145 @@ async def export_csv(
         )
 
     raise HTTPException(status_code=400, detail="type 必须是 questions/audit/feedback")
+
+
+# ---------- 回答质量抽查（P3：#13） ----------
+
+
+@router.get("/reviews", summary="AI回答质量抽查列表（P3）")
+async def list_reviews(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    reviewed: Optional[str] = Query(None, description="reviewed/unreviewed，不传为全部"),
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """抽查列表：全部 AI 回答，未评判的排前面，附用户反馈与管理员评判"""
+    reviewed_exists = exists().where(QualityReview.message_id == ChatMessage.id)
+
+    base = (
+        select(
+            ChatMessage.id, ChatMessage.content, ChatMessage.created_at,
+            ChatSession.title, User.username
+        )
+        .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+        .join(User, User.id == ChatSession.user_id)
+        .where(ChatMessage.role == "assistant")
+    )
+
+    if reviewed == "reviewed":
+        base = base.where(reviewed_exists)
+    elif reviewed == "unreviewed":
+        base = base.where(~reviewed_exists)
+
+    total = (
+        await db.execute(select(func.count()).select_from(base.subquery()))
+    ).scalar() or 0
+
+    rows = (
+        await db.execute(
+            base
+            .order_by(reviewed_exists.desc(), ChatMessage.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+
+    items = []
+    for msg_id, content, created_at, title, username in rows:
+        fb = (
+            await db.execute(select(ChatFeedback).where(ChatFeedback.message_id == msg_id))
+        ).scalar_one_or_none()
+        rv = (
+            await db.execute(select(QualityReview).where(QualityReview.message_id == msg_id))
+        ).scalar_one_or_none()
+        items.append({
+            "message_id": msg_id,
+            "content": content,
+            "created_at": created_at.strftime("%Y-%m-%d %H:%M:%S") if created_at else "",
+            "session_title": title or "",
+            "username": username or "",
+            "feedback": {
+                "rating": fb.rating,
+                "reason": fb.reason,
+                "comment": fb.comment,
+            } if fb else None,
+            "review": {
+                "rating": rv.rating,
+                "comment": rv.comment,
+                "reviewed_at": rv.updated_at.strftime("%Y-%m-%d %H:%M:%S") if rv.updated_at else "",
+            } if rv else None,
+        })
+
+    total_ai = (
+        await db.execute(
+            select(func.count()).select_from(ChatMessage).where(ChatMessage.role == "assistant")
+        )
+    ).scalar()
+    reviewed_total = (
+        await db.execute(select(func.count()).select_from(QualityReview))
+    ).scalar()
+    avg_rating = await db.execute(select(func.avg(QualityReview.rating)))
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "stats": {
+            "total_answers": total_ai or 0,
+            "reviewed": reviewed_total or 0,
+            "unreviewed": (total_ai or 0) - (reviewed_total or 0),
+            "avg_rating": round(avg_rating.scalar() or 0, 1),
+        },
+        "items": items,
+    }
+
+
+@router.post("/reviews", summary="提交/更新回答质量评判（P3）")
+async def submit_review(
+    data: ReviewCreate,
+    request: Request,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """对 AI 回答给出 1-5 分评判；重复提交等于更新（保留一条记录）"""
+    msg = (
+        await db.execute(select(ChatMessage).where(ChatMessage.id == data.message_id))
+    ).scalar_one_or_none()
+    if not msg or msg.role != "assistant":
+        raise HTTPException(status_code=404, detail="回答不存在")
+
+    review = (
+        await db.execute(select(QualityReview).where(QualityReview.message_id == data.message_id))
+    ).scalar_one_or_none()
+
+    if review:
+        review.rating = data.rating
+        review.comment = data.comment
+        review.reviewer_id = current_user.id
+        db.add(review)
+        action = "update_review"
+    else:
+        review = QualityReview(
+            message_id=data.message_id,
+            reviewer_id=current_user.id,
+            rating=data.rating,
+            comment=data.comment,
+        )
+        db.add(review)
+        action = "review_answer"
+
+    await log_audit(
+        db,
+        action=action,
+        username=current_user.username,
+        user_id=current_user.id,
+        target_type="message",
+        target_id=data.message_id,
+        detail=f"rating={data.rating}",
+        ip=get_client_ip(request),
+    )
+    return {"message": "评判已保存", "rating": data.rating}
 
 
 # ---------- 未解答问题收集管理 ----------

@@ -107,7 +107,9 @@ export const ACTION_LABELS: Record<string, string> = {
   handle_question: '处理问题',
   reset_password: '重置密码',
   update_user_status: '用户状态变更',
-  regenerate_chat: '重新生成回答'
+  regenerate_chat: '重新生成回答',
+  review_answer: '质量评判',
+  update_review: '更新评判'
 }
 
 // 获取审计日志
@@ -136,4 +138,57 @@ export const exportCsv = async (
     responseType: 'blob'
   })
   return response as unknown as Blob
+}
+
+// ---------- 回答质量抽查（P3：#13） ----------
+
+export interface ReviewFeedback {
+  rating: string
+  reason?: string
+  comment?: string
+}
+
+export interface ReviewInfo {
+  rating: number
+  comment?: string
+  reviewed_at?: string
+}
+
+export interface ReviewItem {
+  message_id: string
+  content: string
+  created_at: string
+  session_title: string
+  username: string
+  feedback: ReviewFeedback | null
+  review: ReviewInfo | null
+}
+
+export interface ReviewStats {
+  total_answers: number
+  reviewed: number
+  unreviewed: number
+  avg_rating: number
+}
+
+export interface ReviewListResponse {
+  total: number
+  page: number
+  page_size: number
+  stats: ReviewStats
+  items: ReviewItem[]
+}
+
+// 获取质量抽查列表（未评判优先；可按已评判/未评判过滤）
+export const getReviews = (
+  page: number = 1,
+  pageSize: number = 20,
+  reviewed?: 'reviewed' | 'unreviewed'
+): Promise<ReviewListResponse> => {
+  return request.get('/admin/reviews', { params: { page, page_size: pageSize, reviewed } })
+}
+
+// 提交 / 更新回答质量评判（重复提交=更新）
+export const submitReview = (messageId: string, rating: number, comment?: string) => {
+  return request.post('/admin/reviews', { message_id: messageId, rating, comment })
 }
