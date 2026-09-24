@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     
     # 本地Embedding模型
     EMBEDDING_MODEL: str = "shibing624/text2vec-base-chinese"
+
+    # 检索相关度过滤阈值（0 = 关闭）
+    # 数值越小要求越严格；开启后相关性低于阈值的文档会被丢弃，导致"知识库无相关内容"兜底触发。
+    # 需根据真实问答效果校准，默认关闭避免误伤。
+    RETRIEVAL_RELEVANCE_THRESHOLD: float = 0.0
     
     # ChromaDB配置（本地文件存储）
     CHROMA_PERSIST_DIR: str = str(BASE_DIR / "chroma_data")

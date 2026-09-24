@@ -18,6 +18,15 @@ class ChatService:
     # 最大重试次数
     MAX_RETRIES = 3
 
+    # 知识库无相关内容时的兜底回复（避免幻觉，引导转人工/提交问题）
+    FALLBACK_REPLY = (
+        "很抱歉，我在知识库中没有找到与您问题相关的内容。😢\n\n"
+        "您可以：\n"
+        "1. 换个说法重新描述您的问题\n"
+        "2. 点击回复下方的「没找到答案？提交问题」，我们会尽快补充知识库\n"
+        "3. 拨打客服热线转人工咨询"
+    )
+
     def __init__(self):
         self.rag_service = RAGService()
         self.base_url = settings.OPENAI_API_BASE
@@ -81,11 +90,30 @@ class ChatService:
     ) -> dict:
         """获取AI回复（非流式）。
         使用独立的短生命周期 session 保存AI消息，避免持有长事务连接。
+        知识库无相关内容时返回兜底文案（不调用LLM，杜绝幻觉）。
         """
         # 检索相关文档
         docs = await self.rag_service.retrieve_documents(message)
-        context = "\n\n".join([doc.page_content for doc in docs]) if docs else "暂无相关知识库内容"
         references = self.rag_service.format_references(docs)
+
+        # 兜底：无相关文档时不调用 LLM，明确告知并引导
+        if not docs:
+            async with async_session_factory() as save_db:
+                ai_message = ChatMessage(
+                    session_id=session_id,
+                    role="assistant",
+                    content=self.FALLBACK_REPLY,
+                    references=[]
+                )
+                save_db.add(ai_message)
+                await save_db.commit()
+            return {
+                "content": self.FALLBACK_REPLY,
+                "references": [],
+                "message_id": ai_message.id
+            }
+
+        context = "\n\n".join([doc.page_content for doc in docs])
 
         # 构建消息
         messages = self._build_messages(message, history, context)
@@ -106,7 +134,8 @@ class ChatService:
 
         return {
             "content": response,
-            "references": references
+            "references": references,
+            "message_id": ai_message.id
         }
 
     async def _call_api(self, messages: List[dict]) -> str:
@@ -150,11 +179,31 @@ class ChatService:
     ) -> AsyncGenerator[str, None]:
         """流式获取AI回复。
         AI消息使用独立session保存，流式响应期间不占用请求级数据库连接。
+        知识库无相关内容时直接输出兜底文案（不调用LLM，杜绝幻觉）。
         """
         # 检索相关文档
         docs = await self.rag_service.retrieve_documents(message)
-        context = "\n\n".join([doc.page_content for doc in docs]) if docs else "暂无相关知识库内容"
         references = self.rag_service.format_references(docs)
+
+        # 兜底：无相关文档时不调用 LLM，明确告知并引导
+        if not docs:
+            async with async_session_factory() as save_db:
+                ai_message = ChatMessage(
+                    session_id=session_id,
+                    role="assistant",
+                    content=self.FALLBACK_REPLY,
+                    references=[]
+                )
+                save_db.add(ai_message)
+                await save_db.flush()
+                fallback_id = ai_message.id
+                await save_db.commit()
+            yield f"data: {json.dumps({'type': 'content', 'content': self.FALLBACK_REPLY})}\n\n"
+            yield f"data: {json.dumps({'type': 'references', 'references': []})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'message_id': fallback_id})}\n\n"
+            return
+
+        context = "\n\n".join([doc.page_content for doc in docs])
 
         # 构建消息
         messages = self._build_messages(message, history, context)
@@ -171,9 +220,6 @@ class ChatService:
             # 发送引用来源
             yield f"data: {json.dumps({'type': 'references', 'references': references})}\n\n"
 
-            # 发送完成信号
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
             # 保存AI回复（独立session，立即提交）
             async with async_session_factory() as save_db:
                 ai_message = ChatMessage(
@@ -183,7 +229,12 @@ class ChatService:
                     references=references
                 )
                 save_db.add(ai_message)
+                await save_db.flush()
+                saved_message_id = ai_message.id
                 await save_db.commit()
+
+            # 发送完成信号（携带AI消息ID，供前端反馈使用）
+            yield f"data: {json.dumps({'type': 'done', 'message_id': saved_message_id})}\n\n"
 
         except Exception as e:
             print(f"流式对话失败: {e}")

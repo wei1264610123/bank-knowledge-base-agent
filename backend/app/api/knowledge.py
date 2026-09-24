@@ -2,7 +2,7 @@
 知识库管理API路由（管理员）
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, UploadFile, File, Query, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, Query, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
@@ -19,6 +19,7 @@ from app.schemas.knowledge import (
 )
 from app.core.security import get_current_admin_user
 from app.core.exceptions import DocumentNotFoundException, FileUploadException
+from app.core.audit import log_audit, get_client_ip
 from app.services.knowledge_service import KnowledgeService
 
 router = APIRouter()
@@ -72,6 +73,7 @@ async def get_documents(
 
 @router.post("/documents", response_model=DocumentResponse, summary="上传文档")
 async def upload_document(
+    request: Request,
     file: UploadFile = File(..., description="上传文件"),
     category_id: Optional[str] = Query(None, description="分类ID"),
     current_user: User = Depends(get_current_admin_user),
@@ -86,6 +88,18 @@ async def upload_document(
         category_id=category_id,
         created_by=current_user.id,
         db=db
+    )
+
+    # 审计：文档上传留痕（银行场景需记录知识库内容变更）
+    await log_audit(
+        db,
+        action="upload_document",
+        username=current_user.username,
+        user_id=current_user.id,
+        target_type="document",
+        target_id=document.id,
+        detail=f"filename={file.filename}",
+        ip=get_client_ip(request),
     )
 
     doc_response = DocumentResponse.model_validate(document)
@@ -134,24 +148,48 @@ async def get_document(
 @router.delete("/documents/{document_id}", summary="删除文档")
 async def delete_document(
     document_id: str,
+    request: Request,
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """删除文档"""
     knowledge_service = KnowledgeService()
     await knowledge_service.delete_document(document_id, db)
+
+    # 审计：文档删除留痕
+    await log_audit(
+        db,
+        action="delete_document",
+        username=current_user.username,
+        user_id=current_user.id,
+        target_type="document",
+        target_id=document_id,
+        ip=get_client_ip(request),
+    )
     return {"message": "文档已删除"}
 
 
 @router.post("/documents/{document_id}/reprocess", response_model=DocumentResponse, summary="重新处理文档")
 async def reprocess_document(
     document_id: str,
+    request: Request,
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """重新处理文档（重新向量化）"""
     knowledge_service = KnowledgeService()
     document = await knowledge_service.reprocess_document(document_id, db)
+
+    # 审计：文档重新处理留痕
+    await log_audit(
+        db,
+        action="reprocess_document",
+        username=current_user.username,
+        user_id=current_user.id,
+        target_type="document",
+        target_id=document_id,
+        ip=get_client_ip(request),
+    )
     return DocumentResponse.model_validate(document)
 
 
@@ -197,6 +235,7 @@ async def create_category(
 @router.delete("/categories/{category_id}", summary="删除分类")
 async def delete_category(
     category_id: str,
+    request: Request,
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -214,4 +253,15 @@ async def delete_category(
         raise HTTPException(status_code=400, detail="该分类下仍有文档，请先移除或删除相关文档")
 
     await db.delete(category)
+
+    # 审计：分类删除留痕
+    await log_audit(
+        db,
+        action="delete_category",
+        username=current_user.username,
+        user_id=current_user.id,
+        target_type="category",
+        target_id=category_id,
+        ip=get_client_ip(request),
+    )
     return {"message": "分类已删除"}

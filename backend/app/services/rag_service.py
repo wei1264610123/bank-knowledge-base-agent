@@ -117,8 +117,14 @@ class RAGService:
         return added_ids
 
     async def retrieve_documents(self, query: str, k: int = 5) -> List[Document]:
-        """检索相关文档"""
+        """检索相关文档（支持相关度阈值过滤，阈值开启时低于阈值的文档会被丢弃）"""
         try:
+            threshold = settings.RETRIEVAL_RELEVANCE_THRESHOLD or 0.0
+            if threshold > 0:
+                scored = self.vector_store.similarity_search_with_relevance_scores(query, k=k)
+                hits = [(doc, score) for doc, score in scored if score <= threshold]
+                print(f"检索到 {len(hits)}/{len(scored)} 个相关文档（阈值 {threshold}）")
+                return [doc for doc, _ in hits]
             docs = self.vector_store.similarity_search(query, k=k)
             print(f"检索到 {len(docs)} 个相关文档")
             return docs

@@ -1,7 +1,7 @@
 """
 认证API路由
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -26,12 +26,13 @@ from app.core.exceptions import (
     InvalidPasswordException
 )
 from app.core.ratelimit import login_rate_limiter
+from app.core.audit import log_audit, get_client_ip
 
 router = APIRouter()
 
 
 @router.post("/register", response_model=UserResponse, summary="用户注册")
-async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
+async def register(user_data: UserCreate, request: Request, db: AsyncSession = Depends(get_db)):
     """用户注册"""
     # 检查用户名是否已存在
     result = await db.execute(select(User).where(User.username == user_data.username))
@@ -53,11 +54,21 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     db.add(new_user)
     await db.flush()
 
+    # 审计：注册留痕
+    await log_audit(
+        db,
+        action="register",
+        username=new_user.username,
+        user_id=new_user.id,
+        ip=get_client_ip(request),
+    )
+
     return UserResponse.model_validate(new_user)
 
 
 @router.post("/login", response_model=TokenResponse, summary="用户登录")
 async def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db)
 ):
@@ -70,6 +81,13 @@ async def login(
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(form_data.password, user.password_hash):
+        # 审计：登录失败留痕（含用户名与IP，供安全排查）
+        await log_audit(
+            db,
+            action="login_failed",
+            username=form_data.username,
+            ip=get_client_ip(request),
+        )
         raise InvalidPasswordException()
 
     if not user.is_active:
@@ -80,6 +98,15 @@ async def login(
 
     # 创建Token
     access_token = create_access_token(data={"sub": user.id})
+
+    # 审计：登录成功留痕
+    await log_audit(
+        db,
+        action="login",
+        username=user.username,
+        user_id=user.id,
+        ip=get_client_ip(request),
+    )
 
     return TokenResponse(
         access_token=access_token,

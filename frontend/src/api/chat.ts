@@ -52,7 +52,7 @@ export const sendMessageStream = async (
   message: string,
   onChunk: (content: string) => void,
   onReferences: (references: ReferenceItem[]) => void,
-  onDone: () => void,
+  onDone: (messageId: string) => void,
   onError: (error: string) => void
 ) => {
   const authStore = (await import('@/stores/auth')).useAuthStore()
@@ -99,7 +99,8 @@ export const sendMessageStream = async (
             } else if (data.type === 'references') {
               onReferences(data.references)
             } else if (data.type === 'done') {
-              onDone()
+              // done 事件携带后端保存的 AI 消息 ID，供反馈功能使用
+              onDone(data.message_id || '')
             } else if (data.type === 'error') {
               onError(data.message)
             }
@@ -112,4 +113,25 @@ export const sendMessageStream = async (
   } catch (error) {
     onError(error instanceof Error ? error.message : '发送消息失败')
   }
+}
+
+// ---------- 回答反馈（P0） ----------
+
+export interface FeedbackPayload {
+  message_id: string
+  rating: 'up' | 'down'
+  reason?: string
+  comment?: string
+}
+
+// 提交回答反馈（👍/👎）
+export const submitFeedback = (payload: FeedbackPayload) => {
+  return request.post('/chat/feedback', payload)
+}
+
+// ---------- 未解答问题收集（P0） ----------
+
+// 提交"没找到答案"的问题
+export const submitQuestionRequest = (content: string) => {
+  return request.post('/chat/unanswered-requests', { content })
 }

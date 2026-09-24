@@ -73,6 +73,31 @@
                   <div class="reference-content">{{ ref.content }}...</div>
                 </div>
               </div>
+
+              <!-- 回答反馈 + 提交问题（P0） -->
+              <div v-if="message.id && message.id !== 'streaming'" class="ai-actions">
+                <el-button
+                  size="small"
+                  text
+                  :type="feedbackState[message.id] === 'up' ? 'success' : 'primary'"
+                  :disabled="!!feedbackState[message.id]"
+                  @click="handleFeedback(message.id, 'up')"
+                >
+                  {{ feedbackState[message.id] === 'up' ? '✅ 已评价有用' : '👍 有用' }}
+                </el-button>
+                <el-button
+                  size="small"
+                  text
+                  :type="feedbackState[message.id] === 'down' ? 'danger' : 'primary'"
+                  :disabled="!!feedbackState[message.id]"
+                  @click="handleFeedback(message.id, 'down')"
+                >
+                  {{ feedbackState[message.id] === 'down' ? '⛔ 已评价没用' : '👎 没用' }}
+                </el-button>
+                <el-button size="small" text type="warning" @click="openQuestionDialog">
+                  💡 没找到答案？提交问题
+                </el-button>
+              </div>
             </div>
           </div>
         </div>
@@ -129,13 +154,59 @@
         </div>
       </div>
     </div>
+
+    <!-- 👎 反馈原因弹窗 -->
+    <el-dialog v-model="feedbackDialog.visible" title="👎 反馈原因" width="440px">
+      <p class="dialog-tip">这个问题回答得不太满意？请告诉我们原因（选填）：</p>
+      <el-radio-group v-model="feedbackDialog.reason">
+        <el-radio label="not_helpful">没帮到忙</el-radio>
+        <el-radio label="wrong">信息有误</el-radio>
+        <el-radio label="unclear">回答不清晰</el-radio>
+        <el-radio label="incomplete">回答不完整</el-radio>
+        <el-radio label="other">其他</el-radio>
+      </el-radio-group>
+      <el-input
+        v-model="feedbackDialog.comment"
+        type="textarea"
+        :rows="3"
+        maxlength="500"
+        show-word-limit
+        placeholder="补充意见（选填）"
+        style="margin-top: 12px"
+      />
+      <template #footer>
+        <el-button @click="feedbackDialog.visible = false">取消</el-button>
+        <el-button type="primary" @click="submitDownFeedback">提交</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 💡 提交问题弹窗 -->
+    <el-dialog v-model="questionDialog.visible" title="💡 没找到答案？" width="440px">
+      <p class="dialog-tip">别急，告诉我们您想问的问题，我们会尽快补充知识库：</p>
+      <el-input
+        v-model="questionDialog.content"
+        type="textarea"
+        :rows="3"
+        maxlength="500"
+        show-word-limit
+        placeholder="请输入您的问题..."
+      />
+      <template #footer>
+        <el-button @click="questionDialog.visible = false">取消</el-button>
+        <el-button type="primary" :disabled="!questionDialog.content.trim()" @click="submitQuestion">
+          提交问题
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, watch } from 'vue'
+import { ref, reactive, onMounted, nextTick, watch } from 'vue'
 import { Plus, Delete, ChatDotRound, Document, Promotion, Close } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { useChatStore } from '@/stores/chat'
+import { submitFeedback, submitQuestionRequest } from '@/api/chat'
 import type { ReferenceItem } from '@/api/chat'
 
 const chatStore = useChatStore()
@@ -143,6 +214,80 @@ const chatStore = useChatStore()
 const inputMessage = ref('')
 const messagesRef = ref<HTMLElement>()
 const selectedReferences = ref<ReferenceItem[]>([])
+
+// ---------- 回答反馈（P0） ----------
+// 记录消息 ID -> 评价（'up' / 'down'），仅前端会话内生效
+const feedbackState = reactive<Record<string, string>>({})
+
+// 👎 反馈弹窗状态
+const feedbackDialog = reactive({
+  visible: false,
+  messageId: '',
+  reason: '',
+  comment: ''
+})
+
+// 💡 提交问题弹窗状态
+const questionDialog = reactive({
+  visible: false,
+  content: ''
+})
+
+const handleFeedback = (messageId: string, rating: 'up' | 'down') => {
+  if (feedbackState[messageId]) {
+    ElMessage.info('您已经评价过这条回答了')
+    return
+  }
+  if (rating === 'down') {
+    feedbackDialog.messageId = messageId
+    feedbackDialog.reason = ''
+    feedbackDialog.comment = ''
+    feedbackDialog.visible = true
+    return
+  }
+  submitFeedback({ message_id: messageId, rating: 'up' })
+    .then(() => {
+      feedbackState[messageId] = 'up'
+      ElMessage.success('感谢您的反馈！')
+    })
+    .catch(() => ElMessage.error('反馈提交失败，请稍后重试'))
+}
+
+const submitDownFeedback = async () => {
+  const { messageId, reason, comment } = feedbackDialog
+  if (!messageId) return
+  try {
+    await submitFeedback({
+      message_id: messageId,
+      rating: 'down',
+      reason: reason || undefined,
+      comment: comment.trim() || undefined
+    })
+    feedbackState[messageId] = 'down'
+    feedbackDialog.visible = false
+    ElMessage.success('感谢您的反馈，我们会参考改进！')
+  } catch (e) {
+    ElMessage.error('反馈提交失败，请稍后重试')
+  }
+}
+
+// ---------- 未解答问题收集（P0） ----------
+const openQuestionDialog = () => {
+  questionDialog.content = ''
+  questionDialog.visible = true
+}
+
+const submitQuestion = async () => {
+  const content = questionDialog.content.trim()
+  if (!content) return
+  try {
+    await submitQuestionRequest(content)
+    questionDialog.visible = false
+    ElMessage.success('问题已提交，我们会尽快补充知识库！')
+  } catch (e) {
+    ElMessage.error('提交失败，请稍后重试')
+  }
+}
 
 onMounted(async () => {
   await chatStore.fetchSessions()
@@ -404,6 +549,26 @@ const formatMessage = (content: string) => {
 .reference-content {
   color: #606266;
   font-size: 12px;
+}
+
+/* 回答反馈操作区 */
+.ai-actions {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.ai-actions .el-button {
+  padding: 4px 8px;
+}
+
+/* 弹窗提示文字 */
+.dialog-tip {
+  color: #606266;
+  margin-bottom: 12px;
+  line-height: 1.6;
 }
 
 /* 打字动画 */

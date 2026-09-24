@@ -109,10 +109,14 @@ export const useChatStore = defineStore('chat', () => {
         streamingReferences.value = references
         messages.value[aiMessageIndex].references = references
       },
-      // onDone
-      () => {
+      // onDone：携带后端返回的 AI 消息 ID（供反馈按钮使用）
+      (messageId) => {
         isLoading.value = false
-        messages.value[aiMessageIndex].id = Date.now().toString()
+        if (messageId) {
+          messages.value[aiMessageIndex].id = messageId
+        } else {
+          messages.value[aiMessageIndex].id = Date.now().toString()
+        }
         // 刷新会话列表以更新标题和时间
         fetchSessions()
       },
