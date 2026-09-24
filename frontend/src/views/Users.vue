@@ -84,6 +84,31 @@
 
         <!-- Tab 2: 数据面板 -->
         <el-tab-pane label="📊 数据面板" name="dashboard">
+          <!-- 报表导出（P2）：时间范围 + 三种 CSV -->
+          <div class="toolbar">
+            <el-date-picker
+              v-model="exportRange"
+              type="daterange"
+              value-format="YYYY-MM-DD"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              size="small"
+              style="width: 260px"
+              clearable
+            />
+            <el-button size="small" type="primary" :loading="exporting" @click="handleExport('questions')">
+              导出问答明细
+            </el-button>
+            <el-button size="small" type="primary" plain :loading="exporting" @click="handleExport('audit')">
+              导出审计日志
+            </el-button>
+            <el-button size="small" type="primary" plain :loading="exporting" @click="handleExport('feedback')">
+              导出反馈记录
+            </el-button>
+            <span class="toolbar-tip">CSV 文件可直接用 Excel 打开，方便银行留档（不选日期=全部）</span>
+          </div>
+
           <el-row :gutter="20" class="stats-row">
             <el-col :span="4">
               <el-statistic title="今日问答" :value="dashboard.today_questions" />
@@ -278,10 +303,12 @@ import {
   getAuditLogs,
   resetUserPassword,
   getDashboard,
+  exportCsv,
+  EXPORT_FILE_NAMES,
   ACTION_LABELS
 } from '@/api/admin'
 import type { UserInfo } from '@/api/auth'
-import type { Stats, QuestionRequest, AuditLog, DashboardData } from '@/api/admin'
+import type { Stats, QuestionRequest, AuditLog, DashboardData, ExportType } from '@/api/admin'
 
 const activeTab = ref('users')
 
@@ -340,6 +367,30 @@ const fetchDashboard = async () => {
     Object.assign(dashboard, data)
   } finally {
     dashboardLoading.value = false
+  }
+}
+
+// ---------- 报表导出（P2） ----------
+const exportRange = ref<[string, string] | null>(null)
+const exporting = ref(false)
+
+const handleExport = async (type: ExportType) => {
+  exporting.value = true
+  try {
+    const start = exportRange.value?.[0] || undefined
+    const end = exportRange.value?.[1] || undefined
+    const blob = await exportCsv(type, start, end)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = EXPORT_FILE_NAMES[type]
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success(`已导出：${EXPORT_FILE_NAMES[type]}`)
+  } catch (e) {
+    ElMessage.error('导出失败，请稍后重试')
+  } finally {
+    exporting.value = false
   }
 }
 

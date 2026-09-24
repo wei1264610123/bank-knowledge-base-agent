@@ -76,6 +76,11 @@ export const sendMessageStream = async (
       })
     })
 
+    if (response.status === 429) {
+      onError('发送消息过于频繁，请稍后再试')
+      return
+    }
+
     if (!response.ok) {
       throw new Error('请求失败')
     }
@@ -139,4 +144,16 @@ export const submitFeedback = (payload: FeedbackPayload) => {
 // 提交"没找到答案"的问题
 export const submitQuestionRequest = (content: string) => {
   return request.post('/chat/unanswered-requests', { content })
+}
+
+// ---------- P2：推荐问题 / 重新生成 ----------
+
+// 智能推荐问题（热门 + 未解答共性问题）
+export const suggestedQuestions = (): Promise<string[]> => {
+  return request.get('/chat/suggested-questions')
+}
+
+// 删除会话末尾问答对（重新生成用）；回答已被评价时返回 409
+export const clearLastExchange = (sessionId: string) => {
+  return request.delete(`/chat/sessions/${sessionId}/regenerate`)
 }

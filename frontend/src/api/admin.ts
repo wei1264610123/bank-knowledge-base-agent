@@ -106,10 +106,34 @@ export const ACTION_LABELS: Record<string, string> = {
   submit_question: '提交问题',
   handle_question: '处理问题',
   reset_password: '重置密码',
-  update_user_status: '用户状态变更'
+  update_user_status: '用户状态变更',
+  regenerate_chat: '重新生成回答'
 }
 
 // 获取审计日志
 export const getAuditLogs = (action?: string, page: number = 1, pageSize: number = 50): Promise<AuditLog[]> => {
   return request.get('/admin/audit-logs', { params: { action, page, page_size: pageSize } })
+}
+
+// ---------- 报表导出（P2） ----------
+
+export type ExportType = 'questions' | 'audit' | 'feedback'
+
+export const EXPORT_FILE_NAMES: Record<ExportType, string> = {
+  questions: '问答明细.csv',
+  audit: '审计日志.csv',
+  feedback: '反馈记录.csv'
+}
+
+// 导出 CSV 报表（带时间范围筛选，返回 Blob 供下载）
+export const exportCsv = async (
+  type: ExportType,
+  start?: string,
+  end?: string
+): Promise<Blob> => {
+  const response = await request.get('/admin/export', {
+    params: { type, start, end },
+    responseType: 'blob'
+  })
+  return response as unknown as Blob
 }

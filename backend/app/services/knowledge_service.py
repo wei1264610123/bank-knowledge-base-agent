@@ -11,11 +11,68 @@ from sqlalchemy import select
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
+from langchain_core.document_loaders import BaseLoader
 
 from app.config import settings
 from app.models.document import Document as DocumentModel, DocumentChunk
 from app.services.rag_service import RAGService
 from app.core.exceptions import DocumentNotFoundException, FileUploadException
+
+
+class ExcelLoader(BaseLoader):
+    """Excel(.xlsx) 加载器：逐工作表输出"列 | 值"文本（P2）"""
+
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+
+    def lazy_load(self):
+        import openpyxl
+        wb = openpyxl.load_workbook(self.file_path, read_only=True, data_only=True)
+        try:
+            for ws in wb.worksheets:
+                rows = []
+                for row in ws.iter_rows(values_only=True):
+                    cells = [str(c).strip() for c in row if c is not None and str(c).strip()]
+                    if cells:
+                        rows.append(" | ".join(cells))
+                if rows:
+                    yield Document(
+                        page_content=f"[工作表: {ws.title}]\n" + "\n".join(rows),
+                        metadata={},
+                    )
+        finally:
+            wb.close()
+
+
+class PptxLoader(BaseLoader):
+    """PowerPoint(.pptx) 加载器：逐幻灯片输出文本框与表格文本（P2）"""
+
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+
+    def lazy_load(self):
+        from pptx import Presentation
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+        prs = Presentation(self.file_path)
+        for i, slide in enumerate(prs.slides, start=1):
+            texts = []
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for para in shape.text_frame.paragraphs:
+                        t = "".join(run.text for run in para.runs).strip()
+                        if t:
+                            texts.append(t)
+                if shape.shape_type == MSO_SHAPE_TYPE.TABLE and shape.has_table:
+                    for row in shape.table.rows:
+                        cells = [c.text.strip() for c in row.cells if c.text and c.text.strip()]
+                        if cells:
+                            texts.append(" | ".join(cells))
+            if texts:
+                yield Document(
+                    page_content=f"[幻灯片 {i}]\n" + "\n".join(texts),
+                    metadata={},
+                )
 
 
 class KnowledgeService:
@@ -38,6 +95,10 @@ class KnowledgeService:
             return Docx2txtLoader(file_path)
         elif file_type in [".txt", ".md"]:
             return TextLoader(file_path, encoding="utf-8")
+        elif file_type == ".xlsx":
+            return ExcelLoader(file_path)
+        elif file_type == ".pptx":
+            return PptxLoader(file_path)
         else:
             raise FileUploadException(f"不支持的文件类型: {file_type}")
 

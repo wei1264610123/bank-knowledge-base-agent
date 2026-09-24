@@ -55,10 +55,15 @@
         <div v-if="chatStore.messages.length === 0" class="welcome-message">
           <h2>👋 您好，我是小银</h2>
           <p>我是银行智能客服助手，有什么关于银行业务的问题，都可以问我哦！</p>
+          <!-- 智能推荐问题（P2）：热门 + 未解答共性问题 -->
           <div class="quick-questions">
-            <el-button @click="handleQuickQuestion('如何办理信用卡？')">如何办理信用卡？</el-button>
-            <el-button @click="handleQuickQuestion('转账限额是多少？')">转账限额是多少？</el-button>
-            <el-button @click="handleQuickQuestion('如何修改密码？')">如何修改密码？</el-button>
+            <button
+              v-for="q in suggestions"
+              :key="q"
+              class="quick-tag"
+              @click="handleQuickQuestion(q)"
+            >{{ q }}</button>
+            <p v-if="suggestions.length === 0" class="no-sugg">暂无推荐问题，直接输入您的问题吧～</p>
           </div>
         </div>
 
@@ -93,8 +98,20 @@
                 </div>
               </div>
 
-              <!-- 回答反馈 + 提交问题（P0） -->
+              <!-- 回答反馈 + 提交问题（P0）+ 复制/重新生成（P2） -->
               <div v-if="message.id && message.id !== 'streaming'" class="ai-actions">
+                <el-button size="small" text type="info" @click="copyMessage(message.content)">
+                  📋 复制
+                </el-button>
+                <el-button
+                  size="small"
+                  text
+                  type="success"
+                  :disabled="chatStore.isLoading"
+                  @click="handleRegenerate"
+                >
+                  🔄 重新生成
+                </el-button>
                 <el-button
                   size="small"
                   text
@@ -138,6 +155,20 @@
 
       <!-- 输入区域 -->
       <div class="input-container">
+        <!-- 快速追问（P2）：刚回答完后一键深入 -->
+        <div v-if="showQuickFollow" class="quick-follow">
+          <span class="follow-label">💡 还想了解：</span>
+          <el-button
+            v-for="f in quickFollows"
+            :key="f"
+            size="small"
+            text
+            type="primary"
+            :disabled="chatStore.isLoading"
+            @click="handleQuickQuestion(f)"
+          >{{ f }}</el-button>
+        </div>
+
         <div class="input-wrapper">
           <el-input
             v-model="inputMessage"
@@ -225,7 +256,7 @@ import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue'
 import { Plus, Delete, ChatDotRound, Document, Promotion, Close, Search, EditPen, Download } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useChatStore } from '@/stores/chat'
-import { submitFeedback, submitQuestionRequest, getMessages } from '@/api/chat'
+import { submitFeedback, submitQuestionRequest, getMessages, suggestedQuestions as fetchSuggestedQuestions } from '@/api/chat'
 import type { ReferenceItem } from '@/api/chat'
 
 const chatStore = useChatStore()
@@ -233,6 +264,52 @@ const chatStore = useChatStore()
 const inputMessage = ref('')
 const messagesRef = ref<HTMLElement>()
 const selectedReferences = ref<ReferenceItem[]>([])
+
+// ---------- 推荐问题 / 快速追问 / 复制 / 重新生成（P2） ----------
+const suggestions = ref<string[]>([])
+const quickFollows = ['再详细解释一下', '举个具体例子', '用更简单的话说明']
+
+const fetchSuggestions = async () => {
+  try {
+    suggestions.value = await fetchSuggestedQuestions()
+  } catch (e) {
+    suggestions.value = []
+  }
+}
+
+const showQuickFollow = computed(() => {
+  if (chatStore.isLoading || chatStore.messages.length === 0) return false
+  const last = chatStore.messages[chatStore.messages.length - 1]
+  return last.role === 'assistant'
+})
+
+const copyMessage = async (content: string) => {
+  try {
+    await navigator.clipboard.writeText(content)
+  } catch (e) {
+    // 降级复制（旧浏览器 / 非 HTTPS 环境）
+    const ta = document.createElement('textarea')
+    ta.value = content
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+  }
+  ElMessage.success('已复制到剪贴板')
+}
+
+const handleRegenerate = async () => {
+  try {
+    await chatStore.regenerateAnswer()
+  } catch (e) {
+    const detail = (e as any)?.response?.data?.detail
+    ElMessage.error(detail || '重新生成失败，请稍后重试')
+    // 重新同步消息状态（后端可能已删除部分数据）
+    if (chatStore.currentSessionId) {
+      chatStore.selectSession(chatStore.currentSessionId)
+    }
+  }
+}
 
 // ---------- 会话搜索 / 重命名 / 导出（P1） ----------
 const searchTerm = ref('')
@@ -366,6 +443,9 @@ const submitQuestion = async () => {
 
 onMounted(async () => {
   await chatStore.fetchSessions()
+  
+  // 拉取推荐问题（P2）
+  fetchSuggestions()
   
   // 如果有会话，选择第一个
   if (chatStore.sessions.length > 0) {
@@ -563,6 +643,44 @@ const formatMessage = (content: string) => {
   flex-wrap: wrap;
   justify-content: center;
   gap: 12px;
+}
+
+/* 推荐问题标签（P2） */
+.quick-tag {
+  border: 1px solid #d9ecff;
+  background: #ecf5ff;
+  color: #409eff;
+  border-radius: 16px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.quick-tag:hover {
+  background: #409eff;
+  color: #fff;
+  border-color: #409eff;
+}
+
+.no-sugg {
+  color: #c0c4cc;
+  font-size: 13px;
+}
+
+/* 快速追问（P2） */
+.quick-follow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 8px;
+  flex-wrap: wrap;
+}
+
+.follow-label {
+  color: #909399;
+  font-size: 12px;
+  margin-right: 4px;
 }
 
 .message-wrapper {

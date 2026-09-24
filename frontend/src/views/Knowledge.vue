@@ -116,7 +116,7 @@
             drag
             :auto-upload="false"
             :limit="1"
-            accept=".pdf,.docx,.txt,.md"
+            accept=".pdf,.docx,.txt,.md,.xlsx,.pptx"
             :on-change="handleFileChange"
             :on-exceed="handleExceed"
           >
@@ -126,7 +126,7 @@
             </div>
             <template #tip>
               <div class="el-upload__tip">
-                支持 PDF、Word(.docx)、TXT、Markdown 格式，文件大小不超过 10MB
+                支持 PDF、Word(.docx)、Excel(.xlsx)、PPT(.pptx)、TXT、Markdown 格式，文件大小不超过 10MB
               </div>
             </template>
           </el-upload>

@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     ADMIN_PASSWORD: str = "123456"
     
     # 支持的文件类型
-    ALLOWED_FILE_TYPES: list = [".pdf", ".docx", ".txt", ".md"]
+    ALLOWED_FILE_TYPES: list = [".pdf", ".docx", ".txt", ".md", ".xlsx", ".pptx"]
     
     class Config:
         env_file = ".env"

@@ -6,7 +6,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from app.database import get_db, async_session_factory
 from app.models.user import User
@@ -226,6 +226,15 @@ async def chat_completion(
         await db.flush()
         await db.commit()
 
+        # P2 会话自动命名：默认标题"新对话"且为第一条提问时，用提问前20字生成标题
+        if session.title == "新对话":
+            auto_title = chat_request.message.strip().replace("\n", " ").replace("\r", " ")
+            auto_title = auto_title[:20]
+            if auto_title:
+                session.title = auto_title
+                db.add(session)
+                await db.commit()
+
         # 获取历史消息用于上下文
         history_result = await db.execute(
             select(ChatMessage)
@@ -257,6 +266,101 @@ async def chat_completion(
             session_id=session.id
         )
         return response
+
+
+@router.get("/suggested-questions", summary="获取推荐问题（P2）")
+async def get_suggested_questions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """智能推荐问题：热门提问 + 未解答的共性问题，最多6条，展示前脱敏"""
+    # 热门问题：按内容聚类取前4
+    hot_query = (
+        select(ChatMessage.content, func.count(ChatMessage.id).label("cnt"))
+        .where(ChatMessage.role == "user")
+        .group_by(ChatMessage.content)
+        .order_by(func.count(ChatMessage.id).desc())
+        .limit(4)
+    )
+    popular = [mask_pii(c) for c, _ in (await db.execute(hot_query)).all()]
+
+    # 未命中共性问题：open 状态按内容聚类取前4
+    open_query = (
+        select(QuestionRequest.content, func.count(QuestionRequest.id).label("cnt"))
+        .where(QuestionRequest.status == "open")
+        .group_by(QuestionRequest.content)
+        .order_by(func.count(QuestionRequest.id).desc())
+        .limit(4)
+    )
+    unanswered = [mask_pii(c) for c, _ in (await db.execute(open_query)).all()]
+
+    questions = []
+    for q in popular + unanswered:
+        if q and q not in questions:
+            questions.append(q)
+        if len(questions) >= 6:
+            break
+    return questions
+
+
+@router.delete("/sessions/{session_id}/regenerate", summary="删除最后一条问答对（重新生成用）")
+async def regenerate_clear_last(
+    session_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """删除会话末尾的（用户问题 + AI回答）对，供前端"重新生成"使用。
+    若 AI 回答已被用户评价（有反馈记录），拒绝删除以保留评价依据。"""
+    result = await db.execute(
+        select(ChatSession)
+        .where(ChatSession.id == session_id, ChatSession.user_id == current_user.id)
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise SessionNotFoundException(session_id)
+
+    # 取最后两条消息
+    result = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(2)
+    )
+    last_two = list(result.scalars().all())
+
+    to_delete = []
+    if last_two and last_two[0].role == "assistant":
+        # 检查该回答是否已被用户评价（评价后保留依据，不可重新生成）
+        fb = await db.execute(
+            select(ChatFeedback).where(ChatFeedback.message_id == last_two[0].id)
+        )
+        if fb.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="该回答已被评价，无法重新生成")
+        to_delete.append(last_two[0])
+        # 连带删除对应的上一条用户问题
+        if len(last_two) == 2 and last_two[1].role == "user":
+            to_delete.append(last_two[1])
+    elif last_two and last_two[0].role == "user":
+        # 最后一条是用户问题（AI 尚未回复），仅删该问题
+        to_delete.append(last_two[0])
+    else:
+        raise HTTPException(status_code=400, detail="没有可删除的消息")
+
+    for m in to_delete:
+        await db.delete(m)
+
+    # 审计：重新生成留痕
+    await log_audit(
+        db,
+        action="regenerate_chat",
+        username=current_user.username,
+        user_id=current_user.id,
+        target_type="session",
+        target_id=session_id,
+        ip=get_client_ip(request),
+    )
+    return {"message": "已删除最后一条问答"}
 
 
 @router.post("/feedback", summary="提交回答反馈")

@@ -25,6 +25,8 @@ chromadb
 # 文档处理
 pypdf
 docx2txt
+openpyxl
+python-pptx
 
 # 工具库
 pydantic

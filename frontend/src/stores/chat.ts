@@ -9,7 +9,8 @@ import {
   deleteSession as deleteSessionApi,
   renameSession as renameSessionApi,
   getMessages,
-  sendMessageStream
+  sendMessageStream,
+  clearLastExchange
 } from '@/api/chat'
 import type { ChatSession, ChatMessage, ReferenceItem } from '@/api/chat'
 
@@ -146,6 +147,18 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // 重新生成最后一条回答（P2）：后端删除末尾问答对后，重新提交原问题
+  const regenerateAnswer = async () => {
+    if (!currentSessionId.value || isLoading.value) return
+    const lastUser = [...messages.value].reverse().find(m => m.role === 'user')
+    if (!lastUser) return
+    // 后端会先删除末尾"问题+回答"，已评价的回答会拒绝（409）
+    await clearLastExchange(currentSessionId.value)
+    // 重新拉取消息列表（与后端一致），再重新提问
+    messages.value = await getMessages(currentSessionId.value)
+    await sendMessage(lastUser.content)
+  }
+
   return {
     sessions,
     currentSessionId,
@@ -158,6 +171,7 @@ export const useChatStore = defineStore('chat', () => {
     selectSession,
     deleteSession,
     renameSessionAction,
+    regenerateAnswer,
     sendMessage,
     resetState
   }
