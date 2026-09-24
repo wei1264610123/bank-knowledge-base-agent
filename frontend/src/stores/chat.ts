@@ -7,6 +7,7 @@ import {
   getSessions,
   createSession as createSessionApi,
   deleteSession as deleteSessionApi,
+  renameSession as renameSessionApi,
   getMessages,
   sendMessageStream
 } from '@/api/chat'
@@ -52,6 +53,15 @@ export const useChatStore = defineStore('chat', () => {
       } else {
         messages.value = []
       }
+    }
+  }
+
+  // 重命名会话（P1）
+  const renameSessionAction = async (sessionId: string, title: string) => {
+    const updated = await renameSessionApi(sessionId, title)
+    const idx = sessions.value.findIndex(s => s.id === sessionId)
+    if (idx !== -1) {
+      sessions.value[idx].title = updated.title
     }
   }
 
@@ -147,6 +157,7 @@ export const useChatStore = defineStore('chat', () => {
     createNewSession,
     selectSession,
     deleteSession,
+    renameSessionAction,
     sendMessage,
     resetState
   }

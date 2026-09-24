@@ -8,10 +8,21 @@
           新建对话
         </el-button>
       </div>
-      
+
+      <!-- 会话搜索（P1） -->
+      <div class="search-box">
+        <el-input
+          v-model="searchTerm"
+          placeholder="搜索会话..."
+          clearable
+          size="small"
+          :prefix-icon="Search"
+        />
+      </div>
+
       <div class="session-list">
         <div
-          v-for="session in chatStore.sessions"
+          v-for="session in filteredSessions"
           :key="session.id"
           class="session-item"
           :class="{ active: chatStore.currentSessionId === session.id }"
@@ -19,13 +30,21 @@
         >
           <el-icon><ChatDotRound /></el-icon>
           <span class="session-title">{{ session.title }}</span>
-          <el-icon class="delete-btn" @click.stop="handleDeleteSession(session.id)">
-            <Delete />
-          </el-icon>
+          <div class="session-actions" @click.stop>
+            <el-icon class="action-btn" title="重命名会话" @click="handleRenameSession(session.id)">
+              <EditPen />
+            </el-icon>
+            <el-icon class="action-btn" title="导出会话" @click="handleExportSession(session.id)">
+              <Download />
+            </el-icon>
+            <el-icon class="delete-btn" title="删除会话" @click="handleDeleteSession(session.id)">
+              <Delete />
+            </el-icon>
+          </div>
         </div>
-        
-        <div v-if="chatStore.sessions.length === 0" class="no-sessions">
-          暂无会话，点击上方按钮开始
+
+        <div v-if="filteredSessions.length === 0" class="no-sessions">
+          {{ searchTerm ? '没有匹配的会话' : '暂无会话，点击上方按钮开始' }}
         </div>
       </div>
     </div>
@@ -202,11 +221,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, nextTick, watch } from 'vue'
-import { Plus, Delete, ChatDotRound, Document, Promotion, Close } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue'
+import { Plus, Delete, ChatDotRound, Document, Promotion, Close, Search, EditPen, Download } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useChatStore } from '@/stores/chat'
-import { submitFeedback, submitQuestionRequest } from '@/api/chat'
+import { submitFeedback, submitQuestionRequest, getMessages } from '@/api/chat'
 import type { ReferenceItem } from '@/api/chat'
 
 const chatStore = useChatStore()
@@ -214,6 +233,62 @@ const chatStore = useChatStore()
 const inputMessage = ref('')
 const messagesRef = ref<HTMLElement>()
 const selectedReferences = ref<ReferenceItem[]>([])
+
+// ---------- 会话搜索 / 重命名 / 导出（P1） ----------
+const searchTerm = ref('')
+const filteredSessions = computed(() => {
+  const kw = searchTerm.value.trim().toLowerCase()
+  if (!kw) return chatStore.sessions
+  return chatStore.sessions.filter(s => s.title.toLowerCase().includes(kw))
+})
+
+const handleRenameSession = async (sessionId: string) => {
+  const session = chatStore.sessions.find(s => s.id === sessionId)
+  try {
+    const { value } = await ElMessageBox.prompt('请输入新的会话名称', '重命名会话', {
+      inputValue: session?.title || '',
+      inputPlaceholder: '会话名称',
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputValidator: (v: string) => (v && v.trim() ? true : '名称不能为空')
+    } as any)
+    await chatStore.renameSessionAction(sessionId, value.trim())
+    ElMessage.success('会话已重命名')
+  } catch (e) {
+    // 用户取消，忽略
+  }
+}
+
+const handleExportSession = async (sessionId: string) => {
+  const session = chatStore.sessions.find(s => s.id === sessionId)
+  try {
+    const msgs = await getMessages(sessionId)
+    const lines: string[] = [
+      `【对话导出】${session?.title || '会话'}`,
+      `导出时间：${new Date().toLocaleString('zh-CN')}`,
+      '='.repeat(40)
+    ]
+    msgs.forEach(m => {
+      const who = m.role === 'user' ? '👤 用户' : '🤖 小银'
+      lines.push(`[${who}] ${new Date(m.created_at).toLocaleString('zh-CN')}`)
+      lines.push(m.content)
+      if (m.references && m.references.length > 0) {
+        lines.push('引用来源: ' + m.references.map(r => r.source).join('、'))
+      }
+      lines.push('')
+    })
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${session?.title || '会话'}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('会话已导出')
+  } catch (e) {
+    ElMessage.error('导出失败，请稍后重试')
+  }
+}
 
 // ---------- 回答反馈（P0） ----------
 // 记录消息 ID -> 评价（'up' / 'down'），仅前端会话内生效
@@ -386,6 +461,12 @@ const formatMessage = (content: string) => {
   width: 100%;
 }
 
+/* 会话搜索框 */
+.search-box {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e6e6e6;
+}
+
 .session-list {
   flex: 1;
   overflow-y: auto;
@@ -413,18 +494,33 @@ const formatMessage = (content: string) => {
 
 .session-title {
   flex: 1;
-  margin: 0 12px;
+  margin: 0 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.session-item:not(.active) .delete-btn {
+/* 会话操作区（重命名/导出/删除，hover 显示） */
+.session-actions {
   display: none;
+  align-items: center;
+  gap: 6px;
 }
 
-.session-item:hover .delete-btn {
-  display: block;
+.session-item:hover .session-actions {
+  display: flex;
+}
+
+.session-item.active .session-actions .el-icon {
+  color: #fff;
+}
+
+.session-item:not(.active) .session-actions .el-icon {
+  color: #909399;
+}
+
+.session-actions .el-icon:hover {
+  color: #409eff;
 }
 
 .no-sessions {

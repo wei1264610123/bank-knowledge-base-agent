@@ -10,6 +10,7 @@ from app.config import settings
 from app.models.chat import ChatMessage
 from app.database import async_session_factory
 from app.services.rag_service import RAGService
+from app.core.mask import mask_pii, mask_pii_list
 
 
 class ChatService:
@@ -121,19 +122,23 @@ class ChatService:
         # 调用API（带重试）
         response = await self._call_api(messages)
 
-        # 保存AI回复（独立session，立即提交，不依赖请求生命周期）
+        # P1 脱敏：AI 输出与引用中的手机号/身份证/银行卡号掩码（幂等）
+        masked_response = mask_pii(response)
+        mask_pii_list(references)
+
+        # 保存脱敏后的AI回复（独立session，立即提交，不依赖请求生命周期）
         async with async_session_factory() as save_db:
             ai_message = ChatMessage(
                 session_id=session_id,
                 role="assistant",
-                content=response,
+                content=masked_response,
                 references=references
             )
             save_db.add(ai_message)
             await save_db.commit()
 
         return {
-            "content": response,
+            "content": masked_response,
             "references": references,
             "message_id": ai_message.id
         }
@@ -208,24 +213,32 @@ class ChatService:
         # 构建消息
         messages = self._build_messages(message, history, context)
 
+        # P1 脱敏：引用来源中的敏感信息掩码
+        mask_pii_list(references)
+
         full_response = ""
+        raw_full_response = ""
 
         try:
             # 调用API（流式，带重试）
             async for chunk in self._stream_api(messages):
-                full_response += chunk
-                yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
+                # 逐块脱敏（手机号等号码一般在一个输出块内完整出现；直播展示为最佳努力）
+                raw_full_response += chunk
+                masked_chunk = mask_pii(chunk)
+                full_response += masked_chunk
+                yield f"data: {json.dumps({'type': 'content', 'content': masked_chunk})}\n\n"
                 await asyncio.sleep(0)
 
             # 发送引用来源
             yield f"data: {json.dumps({'type': 'references', 'references': references})}\n\n"
 
             # 保存AI回复（独立session，立即提交）
+            # 存库使用"原始全文整体脱敏"结果，保证即使号码被拆到两个输出块，入库内容也不含明文
             async with async_session_factory() as save_db:
                 ai_message = ChatMessage(
                     session_id=session_id,
                     role="assistant",
-                    content=full_response,
+                    content=mask_pii(raw_full_response),
                     references=references
                 )
                 save_db.add(ai_message)

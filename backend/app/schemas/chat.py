@@ -11,6 +11,11 @@ class ChatSessionCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=200, description="会话标题")
 
 
+class SessionRename(BaseModel):
+    """会话重命名请求"""
+    title: str = Field(..., min_length=1, max_length=200, description="新标题")
+
+
 class ChatSessionResponse(BaseModel):
     """会话响应"""
     id: str

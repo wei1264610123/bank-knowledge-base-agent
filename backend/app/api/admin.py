@@ -1,6 +1,7 @@
 """
 管理员API路由
 """
+from datetime import datetime, time, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,13 +10,14 @@ from app.database import get_db
 from app.models.user import User
 from app.models.document import Document
 from app.models.chat import ChatSession, ChatMessage
-from app.models.feedback import QuestionRequest
+from app.models.feedback import ChatFeedback, QuestionRequest
 from app.models.audit import AuditLog
-from app.schemas.auth import UserResponse
+from app.schemas.auth import UserResponse, AdminPasswordReset
 from app.schemas.feedback import QuestionRequestResponse, QuestionRequestUpdate
 from app.schemas.audit import AuditLogResponse
-from app.core.security import get_current_admin_user
+from app.core.security import get_current_admin_user, get_password_hash
 from app.core.audit import log_audit, get_client_ip
+from app.core.mask import mask_pii
 
 router = APIRouter()
 
@@ -82,6 +84,101 @@ async def update_user_status(
     )
 
     return {"message": f"用户已{'启用' if is_active else '禁用'}"}
+
+
+@router.post("/users/{user_id}/reset-password", summary="管理员重置用户密码")
+async def reset_user_password(
+    user_id: str,
+    payload: AdminPasswordReset,
+    request: Request,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员重置任意用户密码（忘记密码场景，无需邮件服务）"""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        from app.core.exceptions import UserNotFoundException
+        raise UserNotFoundException()
+
+    user.password_hash = get_password_hash(payload.new_password)
+    db.add(user)
+
+    # 审计：管理员重置密码留痕（敏感操作必须可追溯）
+    await log_audit(
+        db,
+        action="reset_password",
+        username=current_user.username,
+        user_id=current_user.id,
+        target_type="user",
+        target_id=user_id,
+        detail=f"为 {user.username} 重置密码",
+        ip=get_client_ip(request),
+    )
+    return {"message": f"已为用户 {user.username} 重置密码"}
+
+
+@router.get("/dashboard", summary="获取运营数据面板")
+async def get_dashboard(
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """数据面板：问答量 / 反馈统计 / 热门问题 / 未命中榜（P1）"""
+    today_start = datetime.combine(datetime.utcnow().date(), time.min)
+    week_start = today_start - timedelta(days=6)
+
+    async def count_questions(since=None):
+        q = select(func.count(ChatMessage.id)).where(ChatMessage.role == "user")
+        if since:
+            q = q.where(ChatMessage.created_at >= since)
+        return (await db.execute(q)).scalar() or 0
+
+    today_questions = await count_questions(today_start)
+    week_questions = await count_questions(week_start)
+    total_questions = await count_questions()
+
+    # 反馈统计
+    up_count = (await db.execute(
+        select(func.count(ChatFeedback.id)).where(ChatFeedback.rating == "up")
+    )).scalar() or 0
+    down_count = (await db.execute(
+        select(func.count(ChatFeedback.id)).where(ChatFeedback.rating == "down")
+    )).scalar() or 0
+
+    # 热门问题 TOP10（按内容聚类统计，展示前脱敏：榜单可能含用户输入的手机号/身份证）
+    hot_query = (
+        select(ChatMessage.content, func.count(ChatMessage.id).label("cnt"))
+        .where(ChatMessage.role == "user")
+        .group_by(ChatMessage.content)
+        .order_by(func.count(ChatMessage.id).desc())
+        .limit(10)
+    )
+    hot_questions = [
+        {"content": mask_pii(content), "count": cnt}
+        for content, cnt in (await db.execute(hot_query)).all()
+    ]
+
+    # 未命中榜 TOP10（用户提交的未解答问题聚类，同样脱敏）
+    unanswered_query = (
+        select(QuestionRequest.content, func.count(QuestionRequest.id).label("cnt"))
+        .group_by(QuestionRequest.content)
+        .order_by(func.count(QuestionRequest.id).desc())
+        .limit(10)
+    )
+    unanswered_top = [
+        {"content": mask_pii(content), "count": cnt}
+        for content, cnt in (await db.execute(unanswered_query)).all()
+    ]
+
+    return {
+        "today_questions": today_questions,
+        "week_questions": week_questions,
+        "total_questions": total_questions,
+        "up_feedback": up_count,
+        "down_feedback": down_count,
+        "hot_questions": hot_questions,
+        "unanswered_top": unanswered_top,
+    }
 
 
 # ---------- 未解答问题收集管理 ----------

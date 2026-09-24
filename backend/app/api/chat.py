@@ -17,12 +17,15 @@ from app.schemas.chat import (
     ChatSessionResponse,
     ChatMessageCreate,
     ChatMessageResponse,
-    ChatRequest
+    ChatRequest,
+    SessionRename,
 )
 from app.schemas.feedback import ChatFeedbackCreate, QuestionRequestCreate
 from app.core.security import get_current_user
 from app.core.exceptions import SessionNotFoundException
 from app.core.audit import log_audit, get_client_ip
+from app.core.ratelimit import chat_rate_limiter
+from app.core.mask import mask_pii
 from app.services.chat_service import ChatService
 
 router = APIRouter()
@@ -144,18 +147,65 @@ async def get_messages(
     )
     messages = result.scalars().all()
 
-    return [ChatMessageResponse.model_validate(msg) for msg in messages]
+    # P1 脱敏：历史消息中的敏感信息掩码后返回（幂等，不污染数据库）
+    responses = []
+    for msg in messages:
+        data = ChatMessageResponse.model_validate(msg)
+        if data.role == "assistant":
+            data.content = mask_pii(data.content)
+        responses.append(data)
+    return responses
+
+
+@router.patch("/sessions/{session_id}", response_model=ChatSessionResponse, summary="重命名会话")
+async def rename_session(
+    session_id: str,
+    payload: SessionRename,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """重命名会话（P1）"""
+    result = await db.execute(
+        select(ChatSession)
+        .where(ChatSession.id == session_id, ChatSession.user_id == current_user.id)
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise SessionNotFoundException(session_id)
+
+    old_title = session.title
+    session.title = payload.title
+    db.add(session)
+
+    # 审计：会话重命名留痕
+    await log_audit(
+        db,
+        action="rename_session",
+        username=current_user.username,
+        user_id=current_user.id,
+        target_type="session",
+        target_id=session_id,
+        detail=f"{old_title[:30]} -> {payload.title[:30]}",
+        ip=get_client_ip(request),
+    )
+    return ChatSessionResponse.model_validate(session)
 
 
 @router.post("/completions", summary="发送消息")
 async def chat_completion(
     chat_request: ChatRequest,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ):
     """发送消息并获取AI回复。
     使用短生命周期session：验证会话、保存用户消息、取历史后立即释放连接，
     流式响应期间不占用数据库连接池（AI消息由ChatService用独立session保存）。
     """
+    # P1 问答限流：同一用户 20 次/分钟，防止刷接口（按用户ID计数）
+    chat_rate_limiter.check(str(current_user.id))
+
+    # 注：聊天本身默认不记审计（量大）；如需合规全量留痕可在 ChatService 内补充。
     async with async_session_factory() as db:
         # 验证会话属于当前用户
         result = await db.execute(

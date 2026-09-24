@@ -29,6 +29,28 @@ export const updateUserStatus = (userId: string, isActive: boolean) => {
   })
 }
 
+// 管理员重置用户密码（忘记密码场景，P1）
+export const resetUserPassword = (userId: string, newPassword: string) => {
+  return request.post(`/admin/users/${userId}/reset-password`, { new_password: newPassword })
+}
+
+// ---------- 数据面板（P1） ----------
+
+export interface DashboardData {
+  today_questions: number
+  week_questions: number
+  total_questions: number
+  up_feedback: number
+  down_feedback: number
+  hot_questions: Array<{ content: string; count: number }>
+  unanswered_top: Array<{ content: string; count: number }>
+}
+
+// 获取运营数据面板
+export const getDashboard = (): Promise<DashboardData> => {
+  return request.get('/admin/dashboard')
+}
+
 // 获取统计数据
 export const getStats = (): Promise<Stats> => {
   return request.get('/admin/stats')
@@ -79,9 +101,11 @@ export const ACTION_LABELS: Record<string, string> = {
   reprocess_document: '重新处理文档',
   delete_category: '删除分类',
   delete_session: '删除会话',
+  rename_session: '重命名会话',
   submit_feedback: '提交反馈',
   submit_question: '提交问题',
   handle_question: '处理问题',
+  reset_password: '重置密码',
   update_user_status: '用户状态变更'
 }
 

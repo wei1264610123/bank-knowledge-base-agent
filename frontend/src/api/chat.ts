@@ -41,6 +41,11 @@ export const deleteSession = (sessionId: string) => {
   return request.delete(`/chat/sessions/${sessionId}`)
 }
 
+// 重命名会话（P1）
+export const renameSession = (sessionId: string, title: string): Promise<ChatSession> => {
+  return request.patch(`/chat/sessions/${sessionId}`, { title })
+}
+
 // 获取消息历史
 export const getMessages = (sessionId: string): Promise<ChatMessage[]> => {
   return request.get(`/chat/sessions/${sessionId}/messages`)

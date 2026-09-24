@@ -43,3 +43,8 @@ class PasswordChange(BaseModel):
     """修改密码请求"""
     old_password: str = Field(..., description="旧密码")
     new_password: str = Field(..., min_length=6, max_length=100, description="新密码")
+
+
+class AdminPasswordReset(BaseModel):
+    """管理员重置用户密码请求（忘记密码场景）"""
+    new_password: str = Field(..., min_length=6, max_length=100, description="新密码")

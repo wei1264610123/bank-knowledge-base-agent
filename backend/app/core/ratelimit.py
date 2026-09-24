@@ -14,9 +14,10 @@ from fastapi import HTTPException, status
 class SlidingWindowRateLimiter:
     """滑动窗口限流器"""
 
-    def __init__(self, max_attempts: int = 5, window_seconds: float = 300.0):
+    def __init__(self, max_attempts: int = 5, window_seconds: float = 300.0, detail: str = "请求过于频繁，请稍后再试"):
         self.max_attempts = max_attempts
         self.window_seconds = window_seconds
+        self.detail = detail
         self._hits: dict = defaultdict(deque)
         self._lock = Lock()
 
@@ -31,7 +32,7 @@ class SlidingWindowRateLimiter:
             if len(dq) >= self.max_attempts:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="登录尝试过于频繁，请稍后再试",
+                    detail=self.detail,
                 )
             dq.append(now)
 
@@ -42,4 +43,15 @@ class SlidingWindowRateLimiter:
 
 
 # 登录限流：同一用户名 5 次 / 5 分钟
-login_rate_limiter = SlidingWindowRateLimiter(max_attempts=5, window_seconds=300)
+login_rate_limiter = SlidingWindowRateLimiter(
+    max_attempts=5,
+    window_seconds=300,
+    detail="登录尝试过于频繁，请稍后再试",
+)
+
+# 问答限流（P1）：同一用户 20 次 / 1 分钟，防止刷接口烧钱
+chat_rate_limiter = SlidingWindowRateLimiter(
+    max_attempts=20,
+    window_seconds=60,
+    detail="发送消息过于频繁，请稍后再试",
+)

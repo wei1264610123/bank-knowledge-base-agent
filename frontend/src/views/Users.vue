@@ -74,7 +74,68 @@
                 {{ formatDate(row.created_at) }}
               </template>
             </el-table-column>
+            <el-table-column label="操作" width="110" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" type="warning" text @click="openResetPassword(row)">重置密码</el-button>
+              </template>
+            </el-table-column>
           </el-table>
+        </el-tab-pane>
+
+        <!-- Tab 2: 数据面板 -->
+        <el-tab-pane label="📊 数据面板" name="dashboard">
+          <el-row :gutter="20" class="stats-row">
+            <el-col :span="4">
+              <el-statistic title="今日问答" :value="dashboard.today_questions" />
+            </el-col>
+            <el-col :span="4">
+              <el-statistic title="近7天问答" :value="dashboard.week_questions" />
+            </el-col>
+            <el-col :span="4">
+              <el-statistic title="总问答量" :value="dashboard.total_questions" />
+            </el-col>
+            <el-col :span="4">
+              <el-statistic title="👍 好评" :value="dashboard.up_feedback">
+                <template #prefix><el-icon style="color: #67c23a"><ChatLineRound /></el-icon></template>
+              </el-statistic>
+            </el-col>
+            <el-col :span="4">
+              <el-statistic title="👎 差评" :value="dashboard.down_feedback">
+                <template #prefix><el-icon style="color: #f56c6c"><ChatLineRound /></el-icon></template>
+              </el-statistic>
+            </el-col>
+          </el-row>
+
+          <el-divider />
+
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <div class="panel-title">🔥 热门问题 TOP10（用户最爱问）</div>
+              <el-table :data="dashboard.hot_questions" v-loading="dashboardLoading" stripe size="small" :max-height="320">
+                <el-table-column type="index" label="#" width="50" />
+                <el-table-column prop="content" label="问题" min-width="200" />
+                <el-table-column prop="count" label="次数" width="80" align="center">
+                  <template #default="{ row }">
+                    <el-tag size="small" type="primary">{{ row.count }}</el-tag>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-empty v-if="dashboard.hot_questions.length === 0" description="暂无问答数据" :image-size="60" />
+            </el-col>
+            <el-col :span="12">
+              <div class="panel-title">📋 待补知识榜单（用户找不到答案）</div>
+              <el-table :data="dashboard.unanswered_top" v-loading="dashboardLoading" stripe size="small" :max-height="320">
+                <el-table-column type="index" label="#" width="50" />
+                <el-table-column prop="content" label="问题" min-width="200" />
+                <el-table-column prop="count" label="次数" width="80" align="center">
+                  <template #default="{ row }">
+                    <el-tag size="small" type="warning">{{ row.count }}</el-tag>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-empty v-if="dashboard.unanswered_top.length === 0" description="暂无未命中问题" :image-size="60" />
+            </el-col>
+          </el-row>
         </el-tab-pane>
 
         <!-- Tab 2: 待补知识（未解答问题收集） -->
@@ -181,6 +242,26 @@
         <el-button type="primary" :disabled="!handleDialog.status" @click="submitHandleDialog">确认处理</el-button>
       </template>
     </el-dialog>
+
+    <!-- 重置密码弹窗（忘记密码场景） -->
+    <el-dialog v-model="resetDialog.visible" title="重置密码" width="420px">
+      <p class="dialog-tip">
+        为用户 <b>{{ resetDialog.username }}</b> 设置新密码，重置后请告知其新密码。
+      </p>
+      <el-input
+        v-model="resetDialog.newPassword"
+        type="password"
+        show-password
+        placeholder="输入新密码（至少6个字符）"
+        maxlength="100"
+      />
+      <template #footer>
+        <el-button @click="resetDialog.visible = false">取消</el-button>
+        <el-button type="primary" :disabled="resetDialog.newPassword.length < 6" @click="submitResetPassword">
+          确认重置
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -195,10 +276,12 @@ import {
   getUnansweredRequests,
   updateUnansweredRequest,
   getAuditLogs,
+  resetUserPassword,
+  getDashboard,
   ACTION_LABELS
 } from '@/api/admin'
 import type { UserInfo } from '@/api/auth'
-import type { Stats, QuestionRequest, AuditLog } from '@/api/admin'
+import type { Stats, QuestionRequest, AuditLog, DashboardData } from '@/api/admin'
 
 const activeTab = ref('users')
 
@@ -212,6 +295,53 @@ const stats = reactive<Stats>({
   total_sessions: 0,
   total_messages: 0
 })
+
+// ---------- 重置密码（忘记密码场景） ----------
+const resetDialog = reactive({
+  visible: false,
+  userId: '',
+  username: '',
+  newPassword: ''
+})
+
+const openResetPassword = (row: UserInfo) => {
+  resetDialog.userId = row.id
+  resetDialog.username = row.username
+  resetDialog.newPassword = ''
+  resetDialog.visible = true
+}
+
+const submitResetPassword = async () => {
+  try {
+    await resetUserPassword(resetDialog.userId, resetDialog.newPassword)
+    resetDialog.visible = false
+    ElMessage.success(`已为用户 ${resetDialog.username} 重置密码`)
+  } catch (error) {
+    ElMessage.error('重置失败，请稍后重试')
+  }
+}
+
+// ---------- 数据面板 ----------
+const dashboardLoading = ref(false)
+const dashboard = reactive<DashboardData>({
+  today_questions: 0,
+  week_questions: 0,
+  total_questions: 0,
+  up_feedback: 0,
+  down_feedback: 0,
+  hot_questions: [],
+  unanswered_top: []
+})
+
+const fetchDashboard = async () => {
+  dashboardLoading.value = true
+  try {
+    const data = await getDashboard()
+    Object.assign(dashboard, data)
+  } finally {
+    dashboardLoading.value = false
+  }
+}
 
 // ---------- 待补知识 ----------
 const questions = ref<QuestionRequest[]>([])
@@ -235,6 +365,7 @@ onMounted(async () => {
   await fetchStats()
   await fetchQuestions()
   await fetchAuditLogs()
+  await fetchDashboard()
 })
 
 const fetchUsers = async () => {
